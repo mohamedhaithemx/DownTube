@@ -1,0 +1,13 @@
+site-packages/
+*.pyc
+__pycache__/
+*.pyo
+.env
+*.zip
+nohup.out
+*.log
+/dist/
+/build/
+*.egg-info/
+.DS_Store
+Thumbs.db
