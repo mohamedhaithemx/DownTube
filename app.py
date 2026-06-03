@@ -1,6 +1,11 @@
 """DownTube - Local YouTube Downloader with Arabic Subtitles.
 
 FastAPI web application that runs locally on the user's machine.
+Supports both web UI mode and CLI mode.
+
+Usage:
+    Web mode:  python app.py
+    CLI mode:  python app.py --cli "https://youtube.com/watch?v=VIDEO_ID"
 """
 
 import os
@@ -29,7 +34,7 @@ from core.utils import (
 )
 
 # Create FastAPI app
-app = FastAPI(title="DownTube", version="1.0.0")
+app = FastAPI(title="DownTube", version="2.0.0")
 
 # Global state
 _download_thread: Optional[threading.Thread] = None
@@ -39,6 +44,7 @@ _downloader_instance: Optional[DownTubeDownloader] = None
 
 
 def get_app_downloader() -> DownTubeDownloader:
+    """Get or create the global downloader instance for the web app."""
     global _downloader_instance
     if _downloader_instance is None:
         _downloader_instance = DownTubeDownloader()
@@ -166,6 +172,9 @@ async def get_video_info(request: Request):
     if not url:
         return JSONResponse({"error": "يرجى إدخال رابط الفيديو"}, status_code=400)
 
+    if not is_valid_youtube_url(url):
+        return JSONResponse({"error": "رابط يوتيوب غير صالح"}, status_code=400)
+
     downloader = get_app_downloader()
     info = downloader.get_video_info(url)
 
@@ -186,12 +195,15 @@ async def list_downloads():
         for f in sorted(download_path.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
             if f.is_file() and f.suffix in ('.mkv', '.mp4', '.webm', '.srt', '.vtt'):
                 stat = f.stat()
+                file_type = "video" if f.suffix in ('.mkv', '.mp4', '.webm') else "subtitle"
+                is_arabic_sub = file_type == "subtitle" and '.ar.' in f.name
                 files.append({
                     "name": f.name,
                     "size": format_size(stat.st_size),
                     "size_bytes": stat.st_size,
                     "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                    "type": "video" if f.suffix in ('.mkv', '.mp4', '.webm') else "subtitle",
+                    "type": file_type,
+                    "is_arabic": is_arabic_sub,
                     "path": str(f),
                 })
 
@@ -218,6 +230,7 @@ async def set_download_dir(request: Request):
 
 def run_cli(url: str, download_dir: Optional[str] = None):
     """Run in CLI mode - download a video directly from command line."""
+    print()
     print("=" * 60)
     print("  DownTube - تحميل فيديوهات يوتيوب مع ترجمات عربية")
     print("=" * 60)
@@ -228,21 +241,27 @@ def run_cli(url: str, download_dir: Optional[str] = None):
     ytdlp_info = check_ytdlp()
 
     if not ffmpeg_info["available"]:
-        print("❌ ffmpeg غير مثبت! يرجى تثبيته أولاً")
-        print("   sudo apt install ffmpeg  (Ubuntu/Debian)")
-        print("   brew install ffmpeg       (macOS)")
+        print("  ffmpeg غير مثبت! يرجى تثبيته أولاً")
+        print("  Ubuntu/Debian: sudo apt install ffmpeg")
+        print("  macOS: brew install ffmpeg")
+        print("  Windows: شغّل setup.bat")
         return 1
 
-    print(f"✅ ffmpeg: {ffmpeg_info.get('version', 'OK')}")
-    print(f"✅ yt-dlp: {ytdlp_info.get('version', 'OK')}")
+    if not ytdlp_info["available"]:
+        print("  yt-dlp غير مثبت! يرجى تثبيته أولاً")
+        print("  pip install yt-dlp")
+        return 1
+
+    print(f"  ffmpeg: {ffmpeg_info.get('version', 'OK')[:50]}")
+    print(f"  yt-dlp:  {ytdlp_info.get('version', 'OK')}")
     print()
 
     if not is_valid_youtube_url(url):
-        print(f"❌ رابط غير صالح: {url}")
+        print(f"  رابط غير صالح: {url}")
         return 1
 
-    print(f"🔗 الرابط: {url}")
-    print(f"📁 مجلد التحميل: {download_dir or get_default_download_dir()}")
+    print(f"  الرابط: {url}")
+    print(f"  مجلد التحميل: {download_dir or get_default_download_dir()}")
     print()
 
     # Create downloader
@@ -255,11 +274,12 @@ def run_cli(url: str, download_dir: Optional[str] = None):
         eta = data.get("eta", "--")
         stage = data.get("stage", "")
 
-        # Clear line and print progress
-        print(f"\r  [{percent:5.1f}%] {stage} | السرعة: {speed} | المتبقي: {eta}", end="", flush=True)
-
-        if status in ("complete", "error"):
-            print()  # New line
+        if status in ("downloading", "processing"):
+            print(f"\r  [{percent:5.1f}%] {stage} | السرعة: {speed} | المتبقي: {eta}     ", end="", flush=True)
+        elif status == "complete":
+            print()
+        elif status == "error":
+            print()
 
     downloader.add_progress_callback(on_progress)
 
@@ -268,21 +288,21 @@ def run_cli(url: str, download_dir: Optional[str] = None):
 
     print()
     if result["status"] == "complete":
-        print("✅ اكتمل التحميل بنجاح!")
+        print("  اكتمل التحميل بنجاح!")
         if result.get("video_path"):
-            print(f"   الفيديو: {result['video_path']}")
+            print(f"  الفيديو: {result['video_path']}")
         if result.get("subtitle_path"):
-            print(f"   الترجمة: {result['subtitle_path']}")
-        print(f"   الترجمة: {result.get('subtitle_info', '')}")
+            print(f"  الترجمة: {result['subtitle_path']}")
+        print(f"  حالة الترجمة: {result.get('subtitle_info', '')}")
         return 0
     else:
-        print(f"❌ فشل التحميل: {result.get('error', 'خطأ غير معروف')}")
+        print(f"  فشل التحميل: {result.get('error', 'خطأ غير معروف')}")
         return 1
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="DownTube - تحميل فيديوهات يوتيوب مع ترجمات عربية"
+        description="DownTube - تحميل فيديوهات يوتيوب مع ترجمات عربية إجبارية"
     )
     parser.add_argument(
         "--cli",
@@ -321,27 +341,28 @@ def main():
     ffmpeg_info = check_ffmpeg()
     ytdlp_info = check_ytdlp()
 
+    print()
     print("=" * 60)
     print("  DownTube - تحميل فيديوهات يوتيوب مع ترجمات عربية")
     print("=" * 60)
     print()
 
     if not ffmpeg_info["available"]:
-        print("⚠️  تحذير: ffmpeg غير مثبت! لن تتمكن من دمج الترجمة")
-        print("   ثبته من: sudo apt install ffmpeg")
+        print("  تحذير: ffmpeg غير مثبت! لن تتمكن من دمج الترجمة")
+        print("  ثبته من: sudo apt install ffmpeg")
     else:
-        print(f"✅ ffmpeg: {ffmpeg_info.get('version', 'OK')}")
+        print(f"  ffmpeg: {ffmpeg_info.get('version', 'OK')[:50]}")
 
     if not ytdlp_info["available"]:
-        print("⚠️  تحذير: yt-dlp غير مثبت!")
+        print("  تحذير: yt-dlp غير مثبت!")
     else:
-        print(f"✅ yt-dlp: {ytdlp_info.get('version', 'OK')}")
+        print(f"  yt-dlp:  {ytdlp_info.get('version', 'OK')}")
 
     print()
-    print(f"🌐 الخادم يعمل على: http://localhost:{port}")
-    print(f"📁 مجلد التحميل: {get_app_downloader().download_dir}")
+    print(f"  الخادم يعمل على: http://localhost:{port}")
+    print(f"  مجلد التحميل: {get_app_downloader().download_dir}")
     print()
-    print("اضغط Ctrl+C لإيقاف الخادم")
+    print("  اضغط Ctrl+C لإيقاف الخادم")
     print()
 
     # Auto-open browser

@@ -1,9 +1,10 @@
-/* DownTube - Frontend JavaScript */
+/* DownTube v2.0 - Frontend JavaScript */
 
 document.addEventListener('DOMContentLoaded', () => {
     // Elements
     const urlInput = document.getElementById('urlInput');
     const pasteBtn = document.getElementById('pasteBtn');
+    const infoBtn = document.getElementById('infoBtn');
     const downloadBtn = document.getElementById('downloadBtn');
     const cancelBtn = document.getElementById('cancelBtn');
     const downloadDirInput = document.getElementById('downloadDirInput');
@@ -19,6 +20,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const resultSection = document.getElementById('resultSection');
     const resultContent = document.getElementById('resultContent');
     const videoPreview = document.getElementById('videoPreview');
+    const videoThumbnail = document.getElementById('videoThumbnail');
+    const videoTitle = document.getElementById('videoTitle');
+    const videoDuration = document.getElementById('videoDuration');
+    const videoQuality = document.getElementById('videoQuality');
+    const videoSubtitles = document.getElementById('videoSubtitles');
     const refreshBtn = document.getElementById('refreshBtn');
     const downloadsList = document.getElementById('downloadsList');
 
@@ -37,13 +43,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Event Listeners
     urlInput.addEventListener('input', onUrlInput);
     pasteBtn.addEventListener('click', pasteFromClipboard);
+    infoBtn.addEventListener('click', fetchVideoInfo);
     downloadBtn.addEventListener('click', startDownload);
     cancelBtn.addEventListener('click', cancelDownload);
     refreshBtn.addEventListener('click', loadDownloads);
 
     urlInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && downloadBtn.disabled === false) {
-            startDownload();
+        if (e.key === 'Enter') {
+            if (isDownloading) return;
+            const url = urlInput.value.trim();
+            if (isYouTubeUrl(url)) {
+                startDownload();
+            }
         }
     });
 
@@ -110,8 +121,62 @@ document.addEventListener('DOMContentLoaded', () => {
             urlInput.value = text;
             onUrlInput();
         } catch (err) {
-            // Clipboard API might not be available
             urlInput.focus();
+        }
+    }
+
+    async function fetchVideoInfo() {
+        const url = urlInput.value.trim();
+        if (!url || !isYouTubeUrl(url)) return;
+
+        infoBtn.textContent = '⏳';
+        infoBtn.disabled = true;
+
+        try {
+            const res = await fetch('/api/info', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url }),
+            });
+
+            const data = await res.json();
+
+            if (data.error) {
+                showError(data.error);
+                return;
+            }
+
+            // Show video preview
+            videoPreview.classList.remove('hidden');
+            if (data.thumbnail) {
+                videoThumbnail.src = data.thumbnail;
+                videoThumbnail.onerror = () => { videoThumbnail.style.display = 'none'; };
+            }
+            videoTitle.textContent = data.title || 'بدون عنوان';
+            videoDuration.textContent = data.duration_str || '';
+            videoQuality.textContent = data.best_quality || '';
+
+            // Subtitle info
+            const subs = data.subtitles || {};
+            if (subs.has_manual_arabic) {
+                videoSubtitles.textContent = 'ترجمة عربية يدوية ✅';
+                videoSubtitles.className = 'sub-badge available';
+            } else if (subs.has_auto_arabic) {
+                videoSubtitles.textContent = 'ترجمة عربية تلقائية ✅';
+                videoSubtitles.className = 'sub-badge available';
+            } else {
+                videoSubtitles.textContent = 'لا توجد ترجمة عربية ⚠️';
+                videoSubtitles.className = 'sub-badge';
+            }
+
+            // Enable download button
+            downloadBtn.disabled = false;
+
+        } catch (err) {
+            showError('فشل فحص الفيديو');
+        } finally {
+            infoBtn.textContent = '🔍';
+            infoBtn.disabled = false;
         }
     }
 
@@ -204,14 +269,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateProgress(data) {
         progressStage.textContent = data.stage || 'جاري التحميل...';
-        progressPercent.textContent = data.progress_percent + '%';
-        progressBar.style.width = data.progress_percent + '%';
+        const pct = Math.min(data.progress_percent || 0, 100);
+        progressPercent.textContent = pct.toFixed(1) + '%';
+        progressBar.style.width = pct + '%';
         progressSpeed.textContent = 'السرعة: ' + (data.speed || '--');
         progressEta.textContent = 'المتبقي: ' + (data.eta || '--');
         progressSize.textContent = (data.downloaded_str || '0') + ' / ' + (data.total_str || '--');
     }
 
     function updateSubtitleStatus(data) {
+        if (!data.subtitle_status) return;
+
         if (data.subtitle_status === 'found') {
             subtitleInfo.textContent = data.subtitle_info || 'تم العثور على ترجمة عربية';
             subtitleSection.className = 'subtitle-section found';
@@ -219,11 +287,14 @@ document.addEventListener('DOMContentLoaded', () => {
             subtitleInfo.textContent = data.subtitle_info || 'لا توجد ترجمات عربية - سيتم تحميل الفيديو بدون ترجمة';
             subtitleSection.className = 'subtitle-section not-found';
         } else if (data.subtitle_status === 'downloading') {
-            subtitleInfo.textContent = 'جاري تحميل الترجمة العربية...';
+            subtitleInfo.textContent = 'جاري تحميل الترجمة العربية مع الفيديو...';
             subtitleSection.className = 'subtitle-section';
         } else if (data.subtitle_status === 'embedded') {
             subtitleInfo.textContent = data.subtitle_info || 'تم تضمين الترجمة العربية في الفيديو ✅';
             subtitleSection.className = 'subtitle-section embedded';
+        } else if (data.subtitle_status === 'failed') {
+            subtitleInfo.textContent = data.subtitle_info || 'فشل تحميل الترجمة العربية';
+            subtitleSection.className = 'subtitle-section not-found';
         }
     }
 
@@ -238,10 +309,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let details = '';
         if (data.video_path) {
-            details += `<div>📁 الفيديو: ${data.video_path}</div>`;
+            details += `<div class="result-detail">📁 الفيديو: <code>${data.video_path}</code></div>`;
         }
         if (data.subtitle_path) {
-            details += `<div>🔤 الترجمة: ${data.subtitle_path}</div>`;
+            details += `<div class="result-detail">🔤 الترجمة: <code>${data.subtitle_path}</code></div>`;
+        }
+        if (data.subtitle_info) {
+            const subClass = data.subtitle_status === 'embedded' ? 'success' : 'warning';
+            details += `<div class="result-detail result-${subClass}">📝 ${data.subtitle_info}</div>`;
         }
 
         resultContent.innerHTML = `
@@ -313,7 +388,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         <span class="download-item-icon">${f.type === 'video' ? '🎬' : '🔤'}</span>
                         <div class="download-item-info">
                             <div class="download-item-name">${f.name}</div>
-                            <div class="download-item-meta">${f.size} • ${new Date(f.modified).toLocaleString('ar')}</div>
+                            <div class="download-item-meta">
+                                ${f.size} • ${new Date(f.modified).toLocaleString('ar')}
+                                ${f.is_arabic ? ' • 🇸🇦 ترجمة عربية' : ''}
+                            </div>
                         </div>
                     </div>
                 `).join('');
