@@ -1,0 +1,25 @@
+# DownTube
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+downloads/
+*.mkv
+*.mp4
+*.webm
+*.srt
+*.vtt
+AppDir/
+build_appimage/
+squashfs-root/
+*.AppImage
+.env
+.venv/
+venv/
+node_modules/
+.DS_Store
+Thumbs.db

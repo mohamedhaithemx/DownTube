@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DownTube - تحميل فيديوهات يوتيوب</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⬇️</text></svg>">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <span class="logo-icon">⬇️</span>
+                <h1>DownTube</h1>
+            </div>
+            <p class="subtitle">تحميل فيديوهات يوتيوب مع ترجمات عربية</p>
+        </header>
+
+        <!-- Status Bar -->
+        <div id="statusBar" class="status-bar">
+            <div class="status-item" id="ffmpegStatus">
+                <span class="status-dot"></span>
+                <span>ffmpeg</span>
+            </div>
+            <div class="status-item" id="ytdlpStatus">
+                <span class="status-dot"></span>
+                <span>yt-dlp</span>
+            </div>
+            <div class="status-item" id="downloadDirStatus">
+                <span>📁</span>
+                <span id="downloadDirText">~/Downloads/DownTube/</span>
+            </div>
+        </div>
+
+        <!-- Main Download Section -->
+        <main class="main-section">
+            <!-- URL Input -->
+            <div class="input-group">
+                <div class="url-input-wrapper">
+                    <input 
+                        type="text" 
+                        id="urlInput" 
+                        placeholder="الصق رابط يوتيوب هنا..."
+                        autocomplete="off"
+                        spellcheck="false"
+                    >
+                    <button id="pasteBtn" class="paste-btn" title="لصق من الحافظة">
+                        📋
+                    </button>
+                </div>
+            </div>
+
+            <!-- Video Info Preview -->
+            <div id="videoPreview" class="video-preview hidden">
+                <img id="videoThumbnail" class="video-thumbnail" src="" alt="">
+                <div class="video-info-text">
+                    <h3 id="videoTitle"></h3>
+                    <div class="video-meta">
+                        <span id="videoDuration"></span>
+                        <span id="videoQuality"></span>
+                        <span id="videoSubtitles" class="sub-badge"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Download Options -->
+            <div class="download-options">
+                <div class="option-row">
+                    <label for="downloadDirInput">مجلد التحميل:</label>
+                    <input 
+                        type="text" 
+                        id="downloadDirInput" 
+                        placeholder="~/Downloads/DownTube/"
+                        value=""
+                    >
+                </div>
+            </div>
+
+            <!-- Download Button -->
+            <div class="button-group">
+                <button id="downloadBtn" class="download-btn" disabled>
+                    <span class="btn-icon">⬇️</span>
+                    <span class="btn-text">تحميل الفيديو</span>
+                </button>
+                <button id="cancelBtn" class="cancel-btn hidden">
+                    <span class="btn-icon">✕</span>
+                    <span class="btn-text">إلغاء</span>
+                </button>
+            </div>
+
+            <!-- Progress Section -->
+            <div id="progressSection" class="progress-section hidden">
+                <div class="progress-header">
+                    <span id="progressStage" class="progress-stage">جاري التحضير...</span>
+                    <span id="progressPercent" class="progress-percent">0%</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div id="progressBar" class="progress-bar" style="width: 0%"></div>
+                </div>
+                <div class="progress-details">
+                    <span id="progressSpeed">السرعة: --</span>
+                    <span id="progressEta">المتبقي: --</span>
+                    <span id="progressSize">0 / --</span>
+                </div>
+            </div>
+
+            <!-- Subtitle Status -->
+            <div id="subtitleSection" class="subtitle-section hidden">
+                <div class="subtitle-header">
+                    <span>🔤</span>
+                    <span>حالة الترجمة العربية</span>
+                </div>
+                <div id="subtitleInfo" class="subtitle-info">جاري البحث عن الترجمة...</div>
+            </div>
+
+            <!-- Result Section -->
+            <div id="resultSection" class="result-section hidden">
+                <div id="resultContent"></div>
+            </div>
+        </main>
+
+        <!-- Downloads List -->
+        <section class="downloads-section">
+            <div class="section-header">
+                <h2>📁 الملفات المحملة</h2>
+                <button id="refreshBtn" class="refresh-btn" title="تحديث">🔄</button>
+            </div>
+            <div id="downloadsList" class="downloads-list">
+                <p class="empty-message">لا توجد ملفات محملة بعد</p>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>DownTube v1.0 | يعمل محلياً على جهازك 🔒</p>
+        </footer>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
