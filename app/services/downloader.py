@@ -11,6 +11,7 @@
 import os
 import time
 import shutil
+import random
 import threading
 import logging
 from typing import Optional
@@ -21,6 +22,11 @@ from app.config import (
     DEFAULT_DOWNLOAD_DIR,
     MAX_TITLE_LENGTH,
     SUBTITLE_PREFERRED_FORMAT,
+    INTER_PHASE_DELAY_MIN,
+    INTER_PHASE_DELAY_MAX,
+    PRE_DOWNLOAD_DELAY_MIN,
+    PRE_DOWNLOAD_DELAY_MAX,
+    MAX_VIDEO_DURATION_FOR_WHISPER,
     PHASE_FETCH_INFO,
     PHASE_CHECK_SUBTITLE,
     PHASE_DOWNLOAD_VIDEO,
@@ -40,6 +46,7 @@ from app.services.anti_block import (
 )
 from app.services.subtitle import check_subtitles, find_subtitle_file, rename_subtitle_file
 from app.services.progress import ProgressTracker
+from app.services.whisper_service import generate_subtitles as whisper_generate
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +128,7 @@ class DownloadService:
         cookiefile: Optional[str] = None,
         proxy: Optional[str] = None,
         progress: Optional[ProgressTracker] = None,
+        download_id: str = "",
     ) -> dict:
         """
         تنزيل فيديو يوتيوب مع الترجمة.
@@ -142,7 +150,7 @@ class DownloadService:
 
         try:
             return self._do_download(
-                url, output_dir, lang, include_subtitle, cookiefile, proxy, progress
+                url, output_dir, lang, include_subtitle, cookiefile, proxy, progress, download_id
             )
         except DownloadCancelledError:
             if progress:
@@ -165,6 +173,7 @@ class DownloadService:
         cookiefile: Optional[str],
         proxy: Optional[str],
         progress: Optional[ProgressTracker],
+        download_id: str = "",
     ) -> dict:
         """المنطق الداخلي للتحميل."""
 
@@ -198,11 +207,19 @@ class DownloadService:
                 if progress:
                     progress.update_phase_progress(
                         100,
-                        message="لا توجد ترجمة عربية"
+                        message="جاري محاولة تحميل الترجمة التلقائية..."
                     )
-                    progress.info("NO_SUBTITLE")
 
         self._check_cancelled()
+
+        # ── تأخير قبل التحميل لمنع حظر يوتيوب ──────────
+        inter_delay = random.uniform(INTER_PHASE_DELAY_MIN, INTER_PHASE_DELAY_MAX)
+        logger.debug("انتظار %.1f ثانية بين جلب المعلومات والتحميل...", inter_delay)
+        if progress:
+            progress.update_phase_progress(
+                100, message=f"انتظار {inter_delay:.0f} ثواني قبل التحميل..."
+            )
+        time.sleep(inter_delay)
 
         # ── المرحلة 2: تنزيل الفيديو ─────────────────────
         if progress:
@@ -221,12 +238,20 @@ class DownloadService:
         # إعداد خيارات الترجمة
         write_subtitles = False
         subtitle_lang_key = None
-        if include_subtitle and subtitle_info:
+        if include_subtitle:
+            subtitle_lang_key = subtitle_info["key"] if subtitle_info else lang
             write_subtitles = True
-            subtitle_lang_key = subtitle_info["key"]
             extra_opts["writesubtitles"] = True
+            extra_opts["writeautomaticsub"] = True
             extra_opts["subtitleslangs"] = [subtitle_lang_key]
             extra_opts["subtitlesformat"] = SUBTITLE_PREFERRED_FORMAT
+
+        # إعداد خيارات مكافحة الحظر
+        extra_opts["sleep_interval_requests"] = 5
+        extra_opts["sleep_interval"] = 3
+        extra_opts["extractor_retries"] = 3
+        extra_opts["file_access_retries"] = 3
+        extra_opts["ignoreerrors"] = True
 
         if ffmpeg_location is not None:
             extra_opts["ffmpeg_location"] = ffmpeg_location
@@ -269,6 +294,10 @@ class DownloadService:
         )
 
         # تنفيذ التحميل مع إعادة المحاولة
+        pre_delay = random.uniform(PRE_DOWNLOAD_DELAY_MIN, PRE_DOWNLOAD_DELAY_MAX)
+        logger.debug("انتظار %.1f ثانية قبل تشغيل yt-dlp...", pre_delay)
+        time.sleep(pre_delay)
+
         def _do_download():
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
@@ -283,16 +312,44 @@ class DownloadService:
         if progress:
             progress.set_phase(3, "جاري معالجة الترجمة...")
 
-        if write_subtitles and subtitle_info:
+        if write_subtitles:
             sub_path = find_subtitle_file(output_dir)
             if sub_path:
                 subtitle_file = rename_subtitle_file(sub_path, title, subtitle_lang_key)
-                subtitle_type = subtitle_info["type"]
+                subtitle_type = subtitle_info["type"] if subtitle_info else "auto"
                 if progress:
                     progress.update_phase_progress(100, message="تمت معالجة الترجمة")
             else:
-                if progress:
-                    progress.update_phase_progress(100, message="لم يتم العثور على ملف الترجمة")
+                # ── محاولة إنشاء الترجمة بالذكاء الاصطناعي ──
+                video_duration = info.get("duration", 0)
+                if video_duration and video_duration > MAX_VIDEO_DURATION_FOR_WHISPER:
+                    msg = f"الفيديو أطول من {MAX_VIDEO_DURATION_FOR_WHISPER//60} د — لن يتم إنشاء ترجمة"
+                    logger.info(msg)
+                    if progress:
+                        progress.update_phase_progress(100, message=msg)
+                else:
+                    if progress:
+                        progress.update_phase_progress(
+                            0, message="الترجمة غير متاحة، جاري إنشائها بالذكاء الاصطناعي..."
+                        )
+                    video_file = self._find_video_file(output_dir, title)
+                    if video_file and os.path.isfile(video_file):
+                        subtitle_file = whisper_generate(
+                            video_path=video_file,
+                            output_dir=output_dir,
+                            title=title,
+                            lang=lang,
+                            progress=progress,
+                        )
+                        if subtitle_file:
+                            subtitle_type = "generated"
+                            logger.info("تم إنشاء الترجمة بالذكاء الاصطناعي: %s", subtitle_file)
+                        else:
+                            if progress:
+                                progress.update_phase_progress(100, message="فشل إنشاء الترجمة")
+                    else:
+                        if progress:
+                            progress.update_phase_progress(100, message="لم يتم العثور على ملف الفيديو للترجمة")
         else:
             if progress:
                 progress.update_phase_progress(100, message="تم تخطي الترجمة")
@@ -316,6 +373,8 @@ class DownloadService:
             "video_file": video_file,
             "subtitle_file": subtitle_file,
             "subtitle_type": subtitle_type,
+            "download_id": download_id,
+            "subtitle_requested": write_subtitles,
         }
 
         if progress:

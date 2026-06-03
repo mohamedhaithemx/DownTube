@@ -79,7 +79,7 @@ def sanitize_filename(name: str) -> str:
     return sanitized
 
 
-def find_subtitle_file(directory: str, max_age: int = 120) -> Optional[str]:
+def find_subtitle_file(directory: str, max_age: int = 3600) -> Optional[str]:
     """
     البحث عن ملف الترجمة الذي تم تنزيله مؤخراً.
     
@@ -116,7 +116,7 @@ def rename_subtitle_file(subtitle_path: str, video_title: str, lang_code: str) -
     ext = os.path.splitext(subtitle_path)[1]
 
     safe_title = sanitize_filename(video_title)
-    new_name = f"{safe_title}_SUBTITLE_{lang_code}{ext}"
+    new_name = f"{safe_title}{ext}"
     new_path = os.path.join(directory, new_name)
 
     # تجنب الكتابة فوق ملف موجود

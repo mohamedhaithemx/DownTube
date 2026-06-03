@@ -9,13 +9,18 @@
 
 import re
 import os
+import uuid
+import time
 import queue
 import threading
 import asyncio
 import logging
+import mimetypes
+from urllib.parse import quote
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
 from app.models import DownloadRequest, DownloadResult, ErrorResponse
@@ -35,6 +40,19 @@ router = APIRouter(prefix="/api", tags=["التحميل"])
 _download_state = STATE_IDLE
 _current_title: Optional[str] = None
 _progress_queue: queue.Queue = queue.Queue()
+
+# ── خريطة التنزيلات لخدمة الملفات ──────────────────────────
+_download_map: dict[str, dict] = {}
+_DOWNLOAD_EXPIRY = 600  # 10 دقائق
+
+
+def _cleanup_expired_downloads():
+    """حذف التنزيلات منتهية الصلاحية."""
+    now = time.time()
+    expired = [k for k, v in _download_map.items() if now - v["created_at"] > _DOWNLOAD_EXPIRY]
+    for k in expired:
+        del _download_map[k]
+    logger.debug("تنظيف: تم حذف %d تنزيلات منتهية", len(expired))
 
 
 def validate_youtube_url(url: str) -> bool:
@@ -95,6 +113,7 @@ async def start_download(request: DownloadRequest):
         global _download_state, _current_title
         progress = ProgressTracker(_progress_queue)
         try:
+            download_id = uuid.uuid4().hex[:12]
             result = download_service.download(
                 url=request.url,
                 output_dir=output_dir,
@@ -103,8 +122,23 @@ async def start_download(request: DownloadRequest):
                 cookiefile=request.cookiefile,
                 proxy=request.proxy,
                 progress=progress,
+                download_id=download_id,
             )
             _current_title = result.get("title")
+            _cleanup_expired_downloads()
+            video_file = result.get("video_file")
+            subtitle_file = result.get("subtitle_file")
+            logger.debug("video_file=%s subtitle_file=%s", video_file, subtitle_file)
+            if video_file and os.path.isfile(video_file):
+                _download_map[download_id] = {
+                    "video": video_file,
+                    "subtitle": subtitle_file if subtitle_file and os.path.isfile(subtitle_file) else None,
+                    "title": result.get("title", "video"),
+                    "created_at": time.time(),
+                }
+                logger.debug("download_map[%s] stored: video=%s subtitle=%s",
+                             download_id, video_file,
+                             subtitle_file if subtitle_file and os.path.isfile(subtitle_file) else None)
         except Exception as e:
             logger.exception("خطأ في الخيط الخلفي: %s", e)
         finally:
@@ -184,3 +218,43 @@ async def get_state():
         "title": _current_title,
         "is_active": download_service.is_active,
     }
+
+
+@router.get(
+    "/download/{download_id}/{file_type}",
+    summary="تحميل ملف الفيديو أو الترجمة",
+)
+async def serve_file(download_id: str, file_type: str):
+    """
+    خدمة ملف الفيديو أو الترجمة المحمل مع فتح نافذة Save As.
+    
+    المسارات:
+        download_id: معرف التحميل
+        file_type: video أو subtitle
+    """
+    if file_type not in ("video", "subtitle"):
+        raise HTTPException(status_code=400, detail="نوع ملف غير صالح")
+
+    entry = _download_map.get(download_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="الملف غير موجود أو انتهت صلاحيته")
+
+    file_path = entry.get(file_type)
+    if not file_path:
+        raise HTTPException(status_code=404, detail="هذا الملف غير متاح")
+
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="الملف غير موجود على السيرفر")
+
+    filename = os.path.basename(file_path)
+    media_type, _ = mimetypes.guess_type(file_path)
+    if not media_type:
+        media_type = "application/octet-stream"
+
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+        },
+    )

@@ -10,9 +10,9 @@
             theme: {
                 extend: {
                     colors: {
-                        primary: { 400: '#818cf8', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca' },
-                        accent:  { 400: '#c084fc', 500: '#a855f7', 600: '#9333ea' },
-                        dark:    { 800: '#1e1b4b', 900: '#0f0a2e', 950: '#070520' },
+                        primary: { 400: '#60a5fa', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8' },
+                        accent:  { 400: '#38bdf8', 500: '#0ea5e9', 600: '#0284c7' },
+                        dark:    { 800: '#172554', 900: '#0a1628', 950: '#040d1a' },
                     }
                 }
             }
@@ -24,7 +24,7 @@
 
         /* ── خلفية متحركة مع Blobs ──────────────────── */
         .bg-animated {
-            background: linear-gradient(135deg, #070520 0%, #0f0a2e 40%, #1e1b4b 100%);
+            background: linear-gradient(135deg, #0a1628 0%, #172554 40%, #1e3a5f 100%);
             position: relative;
             overflow: hidden;
             min-height: 100vh;
@@ -33,12 +33,12 @@
             position: absolute;
             border-radius: 50%;
             filter: blur(80px);
-            opacity: 0.3;
-            animation: blobMove 20s ease-in-out infinite alternate;
+            opacity: 0.25;
+            animation: blobMove 25s ease-in-out infinite alternate;
         }
-        .blob-1 { width: 500px; height: 500px; background: #6366f1; top: -10%; right: -5%; animation-delay: 0s; }
-        .blob-2 { width: 400px; height: 400px; background: #a855f7; bottom: -5%; left: -5%; animation-delay: -7s; }
-        .blob-3 { width: 350px; height: 350px; background: #4f46e5; top: 40%; left: 30%; animation-delay: -14s; }
+        .blob-1 { width: 500px; height: 500px; background: #3b82f6; top: -10%; right: -5%; animation-delay: 0s; }
+        .blob-2 { width: 400px; height: 400px; background: #0ea5e9; bottom: -5%; left: -5%; animation-delay: -7s; }
+        .blob-3 { width: 350px; height: 350px; background: #2563eb; top: 40%; left: 30%; animation-delay: -14s; }
 
         @keyframes blobMove {
             0%   { transform: translate(0, 0) scale(1); }
@@ -47,7 +47,7 @@
             100% { transform: translate(0, 0) scale(1); }
         }
 
-        /* ── جزيئات عائمة ──────────────────────────── */
+        /* ── جزيئات عائمة مع شعار ZET DEV ──────────── */
         .particles {
             position: absolute;
             inset: 0;
@@ -56,32 +56,40 @@
         }
         .particle {
             position: absolute;
-            width: 4px;
-            height: 4px;
-            background: rgba(167, 139, 250, 0.6);
-            border-radius: 50%;
+            pointer-events: none;
             animation: particleFloat linear infinite;
         }
         @keyframes particleFloat {
-            0%   { transform: translateY(100vh) scale(0); opacity: 0; }
-            10%  { opacity: 1; }
-            90%  { opacity: 1; }
-            100% { transform: translateY(-10vh) scale(1); opacity: 0; }
+            0%   { transform: translateY(100vh) rotate(0deg); opacity: 0; }
+            10%  { opacity: 0.06; }
+            90%  { opacity: 0.06; }
+            100% { transform: translateY(-10vh) rotate(360deg); opacity: 0; }
+        }
+        .watermark-logo {
+            color: rgba(96, 165, 250, 0.06);
+            font-size: 48px;
+            font-weight: 900;
+            letter-spacing: 4px;
+            position: absolute;
+        }
+        .watermark-logo:nth-child(odd) {
+            color: rgba(56, 189, 248, 0.04);
         }
 
         /* ── تأثير التوهج (Glow) ──────────────────── */
         .glow-text {
-            text-shadow: 0 0 20px rgba(99, 102, 241, 0.5), 0 0 40px rgba(99, 102, 241, 0.3), 0 0 80px rgba(99, 102, 241, 0.1);
+            color: #ffffff;
+            text-shadow: 0 0 20px rgba(59, 130, 246, 0.6), 0 0 40px rgba(59, 130, 246, 0.4), 0 0 80px rgba(59, 130, 246, 0.2);
         }
         .glow-border {
-            box-shadow: 0 0 15px rgba(99, 102, 241, 0.3), 0 0 30px rgba(99, 102, 241, 0.1), inset 0 0 15px rgba(99, 102, 241, 0.05);
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.3), 0 0 30px rgba(59, 130, 246, 0.1), inset 0 0 15px rgba(59, 130, 246, 0.05);
         }
         .glow-btn {
-            box-shadow: 0 0 20px rgba(99, 102, 241, 0.4), 0 0 40px rgba(168, 85, 247, 0.2);
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.4), 0 0 40px rgba(14, 165, 233, 0.2);
             transition: all 0.3s ease;
         }
         .glow-btn:hover {
-            box-shadow: 0 0 30px rgba(99, 102, 241, 0.6), 0 0 60px rgba(168, 85, 247, 0.4);
+            box-shadow: 0 0 30px rgba(59, 130, 246, 0.6), 0 0 60px rgba(14, 165, 233, 0.4);
             transform: translateY(-2px);
         }
         .glow-btn:disabled {
@@ -93,11 +101,11 @@
 
         /* ── شريط التقدم ──────────────────────────── */
         .progress-bar-bg {
-            background: rgba(30, 27, 75, 0.8);
-            border: 1px solid rgba(99, 102, 241, 0.3);
+            background: rgba(23, 37, 84, 0.8);
+            border: 1px solid rgba(59, 130, 246, 0.3);
         }
         .progress-bar-fill {
-            background: linear-gradient(90deg, #6366f1, #a855f7, #6366f1);
+            background: linear-gradient(90deg, #3b82f6, #0ea5e9, #3b82f6);
             background-size: 200% 100%;
             animation: shimmer 2s linear infinite;
             transition: width 0.3s ease;
@@ -111,7 +119,7 @@
         .step { transition: all 0.4s ease; }
         .step-active .step-dot {
             background: linear-gradient(135deg, #6366f1, #a855f7);
-            box-shadow: 0 0 15px rgba(99, 102, 241, 0.6);
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.6);
             transform: scale(1.3);
         }
         .step-done .step-dot {
@@ -133,46 +141,47 @@
 
         /* ── حوار الترجمة ──────────────────────────── */
         .modal-backdrop {
-            background: rgba(7, 5, 32, 0.8);
+            background: rgba(4, 13, 26, 0.8);
             backdrop-filter: blur(8px);
         }
 
         /* ── شريط التمرير ──────────────────────────── */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.3); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb { background: rgba(59, 130, 246, 0.3); border-radius: 3px; }
 
         /* ── حقول الإدخال ──────────────────────────── */
         input, select {
-            background: rgba(30, 27, 75, 0.6) !important;
-            border: 1px solid rgba(99, 102, 241, 0.3) !important;
+            background: rgba(23, 37, 84, 0.6) !important;
+            border: 1px solid rgba(59, 130, 246, 0.3) !important;
             color: white !important;
             transition: all 0.3s ease;
         }
         input:focus, select:focus {
-            border-color: rgba(99, 102, 241, 0.8) !important;
-            box-shadow: 0 0 15px rgba(99, 102, 241, 0.2) !important;
+            border-color: rgba(59, 130, 246, 0.8) !important;
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.2) !important;
             outline: none;
         }
         input::placeholder { color: rgba(167, 139, 250, 0.4) !important; }
     </style>
 </head>
-<body class="bg-animated text-white">
+<body class="text-white">
 
-    <!-- خلفية Blobs متحركة -->
-    <div class="blob blob-1"></div>
-    <div class="blob blob-2"></div>
-    <div class="blob blob-3"></div>
-
-    <!-- جزيئات عائمة -->
-    <div class="particles" id="particles"></div>
+    <!-- خلفية ثابتة مع Blobs وجزيئات -->
+    <div class="bg-animated fixed inset-0 -z-10">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
+        <div class="particles" id="particles"></div>
+        <div class="watermarks" id="watermarks"></div>
+    </div>
 
     <!-- المحتوى الرئيسي -->
     <div class="relative z-10 flex flex-col items-center min-h-screen px-4 py-8">
 
         <!-- الشعار -->
         <div class="text-center mb-8 fade-in">
-            <h1 class="text-5xl md:text-7xl font-black glow-text bg-gradient-to-l from-primary-400 via-accent-400 to-primary-400 bg-clip-text text-transparent tracking-wider">
+            <h1 class="text-5xl md:text-7xl font-black glow-text tracking-wider">
                 ZET DEV
             </h1>
             <h2 class="text-2xl md:text-3xl font-bold mt-2 text-white/80">
@@ -341,17 +350,34 @@
     </div>
 
     <script>
-        // ── الجزيئات العائمة ────────────────────────────
+        // ── الجزيئات العائمة + شعارات ZET DEV ──────
+        (function createWatermarks() {
+            const wm = document.getElementById('watermarks');
+            for (let i = 0; i < 40; i++) {
+                const el = document.createElement('div');
+                el.className = 'watermark-logo';
+                el.textContent = 'ZET DEV';
+                el.style.left = Math.random() * 100 + '%';
+                el.style.top = Math.random() * 100 + '%';
+                el.style.transform = `rotate(${Math.random() * 360}deg) scale(${0.3 + Math.random() * 0.7})`;
+                el.style.animationDuration = (20 + Math.random() * 30) + 's';
+                el.style.animationDelay = (Math.random() * 20) + 's';
+                wm.appendChild(el);
+            }
+        })();
         (function createParticles() {
             const container = document.getElementById('particles');
-            for (let i = 0; i < 30; i++) {
+            for (let i = 0; i < 20; i++) {
                 const p = document.createElement('div');
                 p.className = 'particle';
+                const size = 2 + Math.random() * 3;
                 p.style.left = Math.random() * 100 + '%';
-                p.style.animationDuration = (8 + Math.random() * 12) + 's';
+                p.style.animationDuration = (10 + Math.random() * 15) + 's';
                 p.style.animationDelay = (Math.random() * 10) + 's';
-                p.style.width = (2 + Math.random() * 4) + 'px';
-                p.style.height = p.style.width;
+                p.style.width = size + 'px';
+                p.style.height = size + 'px';
+                p.style.background = `rgba(96, 165, 250, ${0.2 + Math.random() * 0.4})`;
+                p.style.borderRadius = '50%';
                 container.appendChild(p);
             }
         })();
@@ -438,6 +464,8 @@
             downloading = false;
             setDownloading(false);
 
+            console.log('SSE done event:', data);
+
             // إكمال كل الخطوات
             document.querySelectorAll('.step').forEach(el => {
                 el.classList.remove('step-active');
@@ -457,18 +485,42 @@
             html += '<div class="text-4xl mb-3">✅</div>';
             html += '<h3 class="font-bold text-lg text-green-400 mb-2">تم التحميل بنجاح!</h3>';
 
+            const did = data.result && data.result.download_id;
+
             if (data.result) {
                 if (data.result.title) {
                     html += `<p class="text-white/70 text-sm mb-3">${data.result.title}</p>`;
                 }
-                if (data.result.video_file) {
-                    const name = data.result.video_file.split('/').pop().split('\\').pop();
-                    html += `<div class="flex items-center gap-2 bg-white/5 rounded-lg p-2 mb-2"><span class="text-lg">🎬</span><span class="text-sm text-white/80 truncate">${name}</span></div>`;
-                }
-                if (data.result.subtitle_file) {
-                    const name = data.result.subtitle_file.split('/').pop().split('\\').pop();
-                    const type = data.result.subtitle_type === 'official' ? 'رسمية' : 'تلقائية';
-                    html += `<div class="flex items-center gap-2 bg-white/5 rounded-lg p-2"><span class="text-lg">📝</span><span class="text-sm text-white/80 truncate">${name}</span><span class="text-xs text-accent-400">(${type})</span></div>`;
+                if (did) {
+                    // أزرار التحميل
+                    html += '<div class="flex flex-row gap-2 mt-3">';
+                    html += `<a href="/api/download/${did}/video" class="flex-1 flex items-center justify-center gap-2 bg-gradient-to-l from-primary-600 to-accent-600 glow-btn rounded-xl py-3 px-4 font-bold text-sm hover:opacity-90 transition">
+                        <span>🎬</span> تحميل الفيديو
+                    </a>`;
+                    if (data.result.subtitle_requested) {
+                        if (data.result.subtitle_file) {
+                            const subType = data.result.subtitle_type === 'official' ? 'رسمية' : 'تلقائية';
+                            html += `<a href="/api/download/${did}/subtitle" class="flex-1 flex items-center justify-center gap-2 bg-white/10 border border-white/20 rounded-xl py-3 px-4 font-bold text-sm hover:bg-white/20 transition">
+                                <span>📝</span> تحميل الترجمة (${subType})
+                            </a>`;
+                        } else {
+                            html += `<div class="flex-1 flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-xl py-3 px-4 font-bold text-sm text-white/30 cursor-not-allowed">
+                                <span>📝</span> الترجمة غير متاحة
+                            </div>`;
+                        }
+                    }
+                    html += '</div>';
+                } else {
+                    // Fallback: عرض أسماء الملفات القديمة
+                    if (data.result.video_file) {
+                        const name = data.result.video_file.split('/').pop().split('\\').pop();
+                        html += `<div class="flex items-center gap-2 bg-white/5 rounded-lg p-2 mb-2"><span class="text-lg">🎬</span><span class="text-sm text-white/80 truncate">${name}</span></div>`;
+                    }
+                    if (data.result.subtitle_file) {
+                        const name = data.result.subtitle_file.split('/').pop().split('\\').pop();
+                        const type = data.result.subtitle_type === 'official' ? 'رسمية' : 'تلقائية';
+                        html += `<div class="flex items-center gap-2 bg-white/5 rounded-lg p-2"><span class="text-lg">📝</span><span class="text-sm text-white/80 truncate">${name}</span><span class="text-xs text-accent-400">(${type})</span></div>`;
+                    }
                 }
             }
             if (data.elapsed) {

@@ -5,11 +5,13 @@ import argparse
 import uvicorn
 import logging
 
+from app.config import PORT as DEFAULT_PORT
+
 
 def main():
     parser = argparse.ArgumentParser(description="DownTube — تحميل فيديوهات يوتيوب")
     parser.add_argument("--host", default="127.0.0.1", help="عنوان المضيف")
-    parser.add_argument("--port", type=int, default=8554, help="رقم المنفذ")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="رقم المنفذ")
     parser.add_argument("--debug", action="store_true", help="وضع التصحيح")
     args = parser.parse_args()
 

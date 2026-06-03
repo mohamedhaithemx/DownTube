@@ -11,7 +11,7 @@ DEFAULT_DOWNLOAD_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "DownT
 
 # ── إعدادات الخادم ───────────────────────────────────────────
 HOST = "127.0.0.1"
-PORT = 8554
+PORT = 9999
 
 # ── اللغات المدعومة ──────────────────────────────────────────
 SUPPORTED_LANGS = {
@@ -25,18 +25,30 @@ SUBTITLE_PREFERRED_FORMAT = "srt"
 
 # ── حدود وأرقام ──────────────────────────────────────────────
 MAX_TITLE_LENGTH = 100
-MAX_RETRIES = 3
-RETRY_BACKOFF_BASE = 2       # ثوانٍ — الأساس للـ exponential backoff
-RETRY_BACKOFF_MAX = 30       # حد أقصى للانتظار
-JITTER_MAX = 2               # ثوانٍ — jitter عشوائي
+MAX_RETRIES = 5
+RETRY_BACKOFF_BASE = 3       # ثوانٍ — الأساس للـ exponential backoff
+RETRY_BACKOFF_MAX = 60       # حد أقصى للانتظار
+JITTER_MAX = 3               # ثوانٍ — jitter عشوائي
 
 # ── Rate Limiting ─────────────────────────────────────────────
 RATE_LIMIT_REQUESTS = 10     # عدد الطلبات المسموحة
 RATE_LIMIT_PERIOD = 60       # بالثواني (دقيقة واحدة)
 
 # ── تأخير عشوائي بين الطلبات ────────────────────────────────
-RANDOM_DELAY_MIN = 0.5       # ثانية
-RANDOM_DELAY_MAX = 2.0       # ثانية
+RANDOM_DELAY_MIN = 2.0       # ثانية
+RANDOM_DELAY_MAX = 5.0       # ثانية
+
+# ── تأخير بين المراحل (لمنع حظر يوتيوب) ────────────────────
+INTER_PHASE_DELAY_MIN = 4.0  # ثواني — delay بين extract_info والتحميل
+INTER_PHASE_DELAY_MAX = 8.0  # ثواني
+PRE_DOWNLOAD_DELAY_MIN = 3.0 # ثواني — delay قبل yt-dlp download
+PRE_DOWNLOAD_DELAY_MAX = 6.0 # ثواني
+
+# ── إعدادات Whisper (لتوليد الترجمة بالذكاء الاصطناعي) ────
+WHISPER_MODEL_SIZE = "tiny"              # tiny, base, small, medium, large
+WHISPER_DEVICE = "cpu"                   # cpu أو cuda
+WHISPER_COMPUTE_TYPE = "int8"            # int8, float16, float32
+MAX_VIDEO_DURATION_FOR_WHISPER = 900     # 15 دقيقة (بالثواني)
 
 # ── أنماط روابط يوتيوب الصحيحة ──────────────────────────────
 VALID_URL_PATTERNS = [

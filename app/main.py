@@ -8,6 +8,7 @@
 import os
 import time
 import logging
+import threading
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -19,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import HOST, PORT, RATE_LIMIT_REQUESTS, RATE_LIMIT_PERIOD
 from app.exceptions import RateLimitExceededError
 from app.routers import info, download
+from app.services.whisper_service import preload_model
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +60,20 @@ rate_limiter = RateLimiter()
 async def lifespan(app: FastAPI):
     """بدء وإيقاف التطبيق."""
     logger.info("🚀 DownTube بدأ العمل على http://%s:%d", HOST, PORT)
+    # تحميل نموذج Whisper مسبقاً في خلفية (لا يعطل بدء السيرفر)
+    thread = threading.Thread(target=_preload_whisper, daemon=True)
+    thread.start()
     yield
     logger.info("👋 DownTube يتوقف")
+
+
+def _preload_whisper():
+    """تحميل Whisper في thread منفصل."""
+    try:
+        preload_model()
+        logger.info("تم تحميل نموذج Whisper مسبقاً")
+    except Exception as e:
+        logger.warning("فشل التحميل المسبق لـ Whisper: %s", e)
 
 # ── إنشاء التطبيق ────────────────────────────────────────────
 
