@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DownTube - محمل يوتيوب</title>
+    <style>
+        :root {
+            --bg-primary: #0f0f0f;
+            --bg-secondary: #1a1a2e;
+            --bg-card: #16213e;
+            --bg-input: #0f3460;
+            --accent: #e94560;
+            --accent-hover: #ff6b81;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0b0;
+            --text-success: #4ecca3;
+            --text-error: #ff4757;
+            --text-warning: #ffa502;
+            --border: #2a2a4a;
+            --shadow: rgba(0, 0, 0, 0.4);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .header {
+            width: 100%;
+            background: linear-gradient(135deg, var(--bg-secondary), var(--bg-card));
+            padding: 24px 32px;
+            border-bottom: 2px solid var(--accent);
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(to left, var(--accent), var(--accent-hover));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header p {
+            color: var(--text-secondary);
+            margin-top: 4px;
+            font-size: 0.95rem;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 720px;
+            padding: 24px 16px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 16px;
+            box-shadow: 0 4px 12px var(--shadow);
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--accent);
+        }
+
+        .input-group {
+            margin-bottom: 16px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .input-group input,
+        .input-group select {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 1rem;
+            transition: border-color 0.2s;
+        }
+
+        .input-group input:focus,
+        .input-group select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .input-group input::placeholder {
+            color: var(--text-secondary);
+        }
+
+        .options-row {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .options-row .input-group {
+            flex: 1;
+            margin-bottom: 0;
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            flex: 1;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: var(--bg-input);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            border-color: var(--accent);
+            color: var(--text-primary);
+        }
+
+        .btn-info {
+            background: #0f3460;
+            color: var(--text-primary);
+        }
+
+        .btn-info:hover:not(:disabled) {
+            background: #1a4a8a;
+        }
+
+        /* Progress section */
+        .progress-section {
+            display: none;
+        }
+
+        .progress-section.active {
+            display: block;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 8px;
+            background: var(--bg-input);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(to left, var(--accent), var(--accent-hover));
+            border-radius: 4px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .progress-text {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Log section */
+        .log-container {
+            max-height: 200px;
+            overflow-y: auto;
+            background: var(--bg-primary);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            direction: ltr;
+            text-align: left;
+        }
+
+        .log-entry {
+            padding: 2px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-entry.log-error {
+            color: var(--text-error);
+        }
+
+        .log-entry.log-success {
+            color: var(--text-success);
+        }
+
+        .log-entry.log-info {
+            color: var(--text-secondary);
+        }
+
+        .log-entry.log-warning {
+            color: var(--text-warning);
+        }
+
+        /* Video info section */
+        .video-info {
+            display: none;
+        }
+
+        .video-info.active {
+            display: block;
+        }
+
+        .video-info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .info-item {
+            background: var(--bg-primary);
+            padding: 12px;
+            border-radius: 8px;
+        }
+
+        .info-item .label {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        .info-item .value {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .status-idle {
+            background: var(--bg-input);
+            color: var(--text-secondary);
+        }
+
+        .status-running {
+            background: #1a4a8a;
+            color: #64b5f6;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .status-finished {
+            background: #1a4a3a;
+            color: var(--text-success);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        /* Result section */
+        .result-section {
+            display: none;
+        }
+
+        .result-section.active {
+            display: block;
+        }
+
+        .result-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: var(--bg-primary);
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .result-icon {
+            font-size: 1.5rem;
+        }
+
+        .result-details {
+            flex: 1;
+        }
+
+        .result-details .filename {
+            font-weight: 600;
+            word-break: break-all;
+        }
+
+        .result-details .fileinfo {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .container {
+                padding: 16px 8px;
+            }
+
+            .card {
+                padding: 16px;
+            }
+
+            .options-row {
+                flex-direction: column;
+                gap: 12px;
+            }
+
+            .btn-row {
+                flex-direction: column;
+            }
+
+            .video-info-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>DownTube</h1>
+        <p>محمل فيديوهات يوتيوب مع دعم الترجمة العربية</p>
+    </div>
+
+    <div class="container">
+        <!-- URL Input Card -->
+        <div class="card">
+            <div class="card-title">رابط الفيديو</div>
+            <div class="input-group">
+                <input type="text" id="urlInput" placeholder="الصق رابط يوتيوب هنا..." dir="ltr" />
+            </div>
+            <div class="options-row">
+                <div class="input-group">
+                    <label>لغة الترجمة</label>
+                    <select id="langSelect">
+                        <option value="ar">العربية</option>
+                        <option value="en">English</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>تحميل الترجمة؟</label>
+                    <select id="subtitleSelect">
+                        <option value="yes">نعم</option>
+                        <option value="no">لا</option>
+                    </select>
+                </div>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-info" id="infoBtn" onclick="getVideoInfo()">معلومات الفيديو</button>
+                <button class="btn btn-primary" id="downloadBtn" onclick="startDownload()">تحميل</button>
+                <button class="btn btn-secondary" id="cancelBtn" onclick="cancelDownload()" disabled>إلغاء</button>
+            </div>
+        </div>
+
+        <!-- Video Info Card -->
+        <div class="card video-info" id="videoInfoCard">
+            <div class="card-title">معلومات الفيديو</div>
+            <div class="video-info-grid" id="videoInfoGrid"></div>
+        </div>
+
+        <!-- Progress Card -->
+        <div class="card progress-section" id="progressCard">
+            <div class="card-title">
+                حالة التحميل
+                <span class="status-badge status-idle" id="statusBadge">جاهز</span>
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+            <div class="progress-text">
+                <span id="progressPercent">0%</span>
+                <span id="progressSpeed"></span>
+                <span id="progressEta"></span>
+            </div>
+        </div>
+
+        <!-- Log Card -->
+        <div class="card" id="logCard" style="display:none;">
+            <div class="card-title">السجل</div>
+            <div class="log-container" id="logContainer"></div>
+        </div>
+
+        <!-- Result Card -->
+        <div class="card result-section" id="resultCard">
+            <div class="card-title">النتيجة</div>
+            <div id="resultContent"></div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let reconnectTimer = null;
+
+        // ── WebSocket ──────────────────────────────────────
+        function connectWebSocket() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${location.host}/ws`;
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+            };
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                handleMessage(msg);
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected, reconnecting...');
+                reconnectTimer = setTimeout(connectWebSocket, 3000);
+            };
+
+            ws.onerror = (err) => {
+                console.error('WebSocket error:', err);
+            };
+        }
+
+        // ── Message handler ────────────────────────────────
+        function handleMessage(msg) {
+            switch (msg.type) {
+                case 'state':
+                    updateState(msg.state, msg.current_title);
+                    break;
+                case 'progress':
+                    updateProgress(msg.percent, msg.speed, msg.eta);
+                    break;
+                case 'status':
+                    addLog(msg.message, 'info');
+                    break;
+                case 'log':
+                    addLog(msg.message, 'info');
+                    break;
+                case 'info':
+                    addLog(msg.message, msg.subtitle_type ? 'success' : 'warning');
+                    break;
+                case 'done':
+                    handleDone(msg);
+                    break;
+                case 'error':
+                    handleError(msg.message);
+                    break;
+            }
+        }
+
+        // ── State management ───────────────────────────────
+        function updateState(state, title) {
+            const badge = document.getElementById('statusBadge');
+            const downloadBtn = document.getElementById('downloadBtn');
+            const cancelBtn = document.getElementById('cancelBtn');
+
+            badge.className = 'status-badge';
+
+            if (state === 'IDLE') {
+                badge.classList.add('status-idle');
+                badge.textContent = 'جاهز';
+                downloadBtn.disabled = false;
+                cancelBtn.disabled = true;
+            } else if (state === 'RUNNING') {
+                badge.classList.add('status-running');
+                badge.textContent = 'جاري التحميل';
+                downloadBtn.disabled = true;
+                cancelBtn.disabled = false;
+                showProgress();
+            } else if (state === 'FINISHED') {
+                badge.classList.add('status-finished');
+                badge.textContent = 'اكتمل';
+                downloadBtn.disabled = false;
+                cancelBtn.disabled = true;
+            }
+        }
+
+        function showProgress() {
+            document.getElementById('progressCard').classList.add('active');
+        }
+
+        function updateProgress(percent, speed, eta) {
+            const bar = document.getElementById('progressBar');
+            const percentEl = document.getElementById('progressPercent');
+            const speedEl = document.getElementById('progressSpeed');
+            const etaEl = document.getElementById('progressEta');
+
+            bar.style.width = percent + '%';
+            percentEl.textContent = percent.toFixed(1) + '%';
+
+            if (speed) {
+                const speedMB = (speed / 1024 / 1024).toFixed(2);
+                speedEl.textContent = speedMB + ' MB/s';
+            }
+
+            if (eta && eta > 0) {
+                const mins = Math.floor(eta / 60);
+                const secs = eta % 60;
+                etaEl.textContent = `${mins}:${secs.toString().padStart(2, '0')} متبقي`;
+            }
+        }
+
+        // ── Logging ────────────────────────────────────────
+        function addLog(message, level = 'info') {
+            const logCard = document.getElementById('logCard');
+            const container = document.getElementById('logContainer');
+            logCard.style.display = 'block';
+
+            const entry = document.createElement('div');
+            entry.className = 'log-entry log-' + level;
+            const time = new Date().toLocaleTimeString('ar-EG');
+            entry.textContent = `[${time}] ${message}`;
+            container.appendChild(entry);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // ── Done handler ───────────────────────────────────
+        function handleDone(msg) {
+            const resultCard = document.getElementById('resultCard');
+            const resultContent = document.getElementById('resultContent');
+            resultCard.classList.add('active');
+
+            let html = '';
+
+            if (msg.filepath) {
+                const filename = msg.filepath.split('/').pop().split('\\').pop();
+                html += `
+                    <div class="result-item">
+                        <div class="result-icon">🎬</div>
+                        <div class="result-details">
+                            <div class="filename">${filename}</div>
+                            <div class="fileinfo">فيديو</div>
+                        </div>
+                    </div>`;
+            }
+
+            if (msg.subtitle_file) {
+                const subname = msg.subtitle_file.split('/').pop().split('\\').pop();
+                const subType = msg.subtitle_type === 'official' ? 'ترجمة رسمية' : 'ترجمة تلقائية';
+                html += `
+                    <div class="result-item">
+                        <div class="result-icon">📝</div>
+                        <div class="result-details">
+                            <div class="filename">${subname}</div>
+                            <div class="fileinfo">${subType}</div>
+                        </div>
+                    </div>`;
+            }
+
+            if (!msg.filepath && !msg.subtitle_file) {
+                html = '<div class="result-item"><div class="result-details">تم التحميل بنجاح</div></div>';
+            }
+
+            resultContent.innerHTML = html;
+            addLog('تم التحميل بنجاح!', 'success');
+
+            // Reset state after 3 seconds
+            setTimeout(() => {
+                updateState('IDLE', null);
+            }, 3000);
+        }
+
+        // ── Error handler ──────────────────────────────────
+        function handleError(message) {
+            addLog(message, 'error');
+            updateState('FINISHED', null);
+
+            const resultCard = document.getElementById('resultCard');
+            const resultContent = document.getElementById('resultContent');
+            resultCard.classList.add('active');
+            resultContent.innerHTML = `
+                <div class="result-item">
+                    <div class="result-icon">❌</div>
+                    <div class="result-details">
+                        <div class="filename" style="color: var(--text-error);">${message}</div>
+                    </div>
+                </div>`;
+
+            setTimeout(() => {
+                updateState('IDLE', null);
+            }, 5000);
+        }
+
+        // ── API calls ──────────────────────────────────────
+        async function startDownload() {
+            const url = document.getElementById('urlInput').value.trim();
+            const lang = document.getElementById('langSelect').value;
+            const subtitleChoice = document.getElementById('subtitleSelect').value;
+
+            if (!url) {
+                addLog('يرجى إدخال رابط يوتيوب', 'error');
+                return;
+            }
+
+            // Clear previous results
+            document.getElementById('resultCard').classList.remove('active');
+            document.getElementById('resultContent').innerHTML = '';
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressPercent').textContent = '0%';
+            document.getElementById('progressSpeed').textContent = '';
+            document.getElementById('progressEta').textContent = '';
+            document.getElementById('logContainer').innerHTML = '';
+            document.getElementById('logCard').style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url: url,
+                        lang: lang,
+                        subtitle_choice: subtitleChoice,
+                    }),
+                });
+
+                const data = await resp.json();
+                if (!resp.ok) {
+                    handleError(data.detail || 'خطأ غير معروف');
+                    return;
+                }
+
+                addLog(data.message, 'success');
+                showProgress();
+                updateState('RUNNING', null);
+            } catch (err) {
+                handleError('خطأ في الاتصال بالخادم');
+            }
+        }
+
+        async function cancelDownload() {
+            try {
+                const resp = await fetch('/api/cancel', { method: 'POST' });
+                const data = await resp.json();
+                addLog(data.message, 'warning');
+            } catch (err) {
+                addLog('خطأ في إلغاء التحميل', 'error');
+            }
+        }
+
+        async function getVideoInfo() {
+            const url = document.getElementById('urlInput').value.trim();
+            if (!url) {
+                addLog('يرجى إدخال رابط يوتيوب', 'error');
+                return;
+            }
+
+            try {
+                const resp = await fetch(`/api/info?url=${encodeURIComponent(url)}`);
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    addLog(data.detail || 'خطأ في جلب المعلومات', 'error');
+                    return;
+                }
+
+                const infoCard = document.getElementById('videoInfoCard');
+                const infoGrid = document.getElementById('videoInfoGrid');
+                infoCard.classList.add('active');
+
+                let html = `
+                    <div class="info-item" style="grid-column: span 2;">
+                        <div class="label">العنوان</div>
+                        <div class="value">${data.title}</div>
+                    </div>`;
+
+                if (data.duration) {
+                    const mins = Math.floor(data.duration / 60);
+                    const secs = data.duration % 60;
+                    html += `
+                        <div class="info-item">
+                            <div class="label">المدة</div>
+                            <div class="value">${mins}:${secs.toString().padStart(2, '0')}</div>
+                        </div>`;
+                }
+
+                if (data.filesize_estimate) {
+                    const sizeMB = (data.filesize_estimate / 1024 / 1024).toFixed(1);
+                    html += `
+                        <div class="info-item">
+                            <div class="label">الحجم التقريبي</div>
+                            <div class="value">${sizeMB} MB</div>
+                        </div>`;
+                }
+
+                if (data.subtitles_available) {
+                    html += `
+                        <div class="info-item" style="grid-column: span 2;">
+                            <div class="label">الترجمات المتاحة</div>
+                            <div class="value">`;
+                    for (const [lang, info] of Object.entries(data.subtitles_available)) {
+                        const typeLabel = info.type === 'official' ? 'رسمية' : 'تلقائية';
+                        html += `<div>${lang}: ${typeLabel} (${info.key})</div>`;
+                    }
+                    html += `</div></div>`;
+                } else {
+                    html += `
+                        <div class="info-item" style="grid-column: span 2;">
+                            <div class="label">الترجمات</div>
+                            <div class="value" style="color: var(--text-warning);">لا توجد ترجمات متاحة</div>
+                        </div>`;
+                }
+
+                infoGrid.innerHTML = html;
+                addLog('تم جلب معلومات الفيديو', 'success');
+            } catch (err) {
+                addLog('خطأ في الاتصال بالخادم', 'error');
+            }
+        }
+
+        // ── Initialize ─────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', () => {
+            connectWebSocket();
+        });
+
+        // Handle Enter key on URL input
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && document.activeElement.id === 'urlInput') {
+                startDownload();
+            }
+        });
+    </script>
+</body>
+</html>

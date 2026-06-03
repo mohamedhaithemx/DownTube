@@ -1,18 +1,17 @@
 <div align="center">
   <br>
 
-  # DownTube - YouTube Downloader
+  # DownTube v3.0 — YouTube Downloader
 
   **تحميل فيديوهات يوتيوب مع الترجمات بسهولة وأمان**
 
-  [![Python](https://img.shields.io/badge/Python-3.9%2B-ff4444?style=flat-square&logo=python&logoColor=white)](https://python.org)
-  [![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+  [![Python](https://img.shields.io/badge/Python-3.10%2B-ff4444?style=flat-square&logo=python&logoColor=white)](https://python.org)
+  [![FastAPI](https://img.shields.io/badge/FastAPI-0.104%2B-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
   [![yt-dlp](https://img.shields.io/badge/yt--dlp-2024%2B-282828?style=flat-square&logo=youtube&logoColor=ff4444)](https://github.com/yt-dlp/yt-dlp)
-  [![Flet](https://img.shields.io/badge/Flet-0.21%2B-448aff?style=flat-square&logo=flutter&logoColor=white)](https://flet.dev)
 
   <br>
 
-  **Desktop Web UI** · **Mobile App** · **Anti-Ban Protection** · **Subtitle Support**
+  **FastAPI Web UI** · **WebSocket Progress** · **Arabic Subtitles** · **Comprehensive Tests**
 
   <br>
 </div>
@@ -21,49 +20,29 @@
 
 ## Overview
 
-DownTube is a powerful YouTube downloader with two interfaces:
-
-- **Desktop Version** — Web UI built with FastAPI, modern responsive design
-- **Mobile Version** — Native-looking app built with Flet framework
-
-It downloads both **video** and **subtitles** with advanced anti-ban strategies to avoid YouTube rate limiting.
+DownTube is a YouTube video downloader with a clean FastAPI web interface. It supports downloading videos with Arabic (and English) subtitles as **separate files** — not embedded — for maximum compatibility.
 
 ---
 
 ## Features
 
-| Feature | Desktop | Mobile |
-|---------|:-------:|:------:|
-| Video Info Fetching | ✅ | ✅ |
-| Video Download (best/720p/480p) | ✅ | ✅ |
-| Subtitle Download (SRT/VTT) | ✅ | ✅ |
-| Auto Subtitles | ✅ | ✅ |
-| Anti-Ban Protection | ✅ | ✅ |
-| Cookies Import | ✅ | ❌ |
-| Download Manager | ✅ | ❌ |
-| Dark Theme | ✅ | ✅ |
-
-### Anti-Ban System
-- User-Agent rotation (15+ browsers/devices)
-- YouTube client switching (`web` / `android`)
-- Smart request delays with progressive backoff
-- HTTP 429 detection and automatic cooldown
-- Session limits to prevent detection
-- Cookie support to raise download limits
-
-### Subtitle Features
-- Download handwritten and auto-generated subtitles
-- Convert between SRT and VTT formats
-- Timing adjustment for perfect sync
-- Clean formatting and duplicate removal
+- **FastAPI Web UI** — Modern dark-themed RTL interface
+- **Real-time progress** — WebSocket-based live download progress
+- **Arabic subtitle support** — Downloads official and auto-generated subtitles separately
+- **Subtitle detection** — Uses file modification time (mtime) for reliable subtitle matching
+- **Language prefix matching** — Supports language variants (ar, ar-SA, ar-EG, etc.)
+- **Disk space check** — 20% buffer before download starts
+- **Retry with backoff** — Network errors retried up to 3 times with [2, 5, 10]s delays
+- **FFmpeg auto-detection** — Searches bundled → PATH → project directory
+- **Cancellation support** — Cancel any download in progress
 
 ---
 
 ## Installation
 
 ### Prerequisites
-- Python 3.9 or higher
-- pip (Python package manager)
+- Python 3.10 or higher
+- FFmpeg (for video merging)
 
 ### Setup
 
@@ -71,76 +50,66 @@ It downloads both **video** and **subtitles** with advanced anti-ban strategies 
 # Clone the repository
 git clone https://github.com/mohamedhaithemx/DownTube.git
 cd DownTube
+git checkout fastapi-app
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Optional: Install FFmpeg for video merging
+# Install FFmpeg
 # Ubuntu/Debian
 sudo apt install ffmpeg
 # macOS
 brew install ffmpeg
+# Windows — download from https://ffmpeg.org/download.html
 ```
 
 ---
 
 ## Usage
 
-### Desktop Version (Web UI)
-
 ```bash
-./run_desktop.sh
-# Or directly:
-python3 desktop/main.py
+# Start the web server
+python run.py
+
+# Or with custom options
+python -m youtube_downloader --port 8080 --host 0.0.0.0
+
+# Debug mode
+python -m youtube_downloader --debug
 ```
 
-Open your browser at **http://localhost:8555**
-
-### Mobile Version (Flet App)
-
-```bash
-./run_mobile.sh
-# Or directly:
-python3 mobile/main.py
-```
-
----
-
-## Desktop Web UI
-
-The web interface features:
-
-- **Dark theme** with responsive RTL design
-- **Real-time progress** via WebSocket
-- **Step indicators** for download stages
-- **Cookie manager** to import YouTube cookies
-- **Download history** with file management
-- **Anti-ban status** dashboard
+Open your browser at **http://127.0.0.1:8554**
 
 ---
 
 ## Project Structure
 
 ```
-youtube-downloader/
-├── core/
-│   ├── __init__.py
-│   ├── anti_ban.py
-│   ├── cookie_manager.py
-│   ├── downloader.py
-│   ├── models.py
-│   └── subtitle_handler.py
-├── desktop/
-│   ├── main.py
-│   └── static/
-│       ├── index.html
-│       ├── script.js
-│       └── style.css
-├── mobile/
-│   └── main.py
-├── requirements.txt
-├── run_desktop.sh
-└── run_mobile.sh
+youtube_downloader/
+├── __init__.py
+├── __main__.py          # python -m entry point
+├── main.py              # Server startup (uvicorn)
+├── app.py               # FastAPI app, routes, WebSocket
+├── config.py            # All constants
+├── downloader.py        # yt-dlp download logic
+├── subtitle_manager.py  # Subtitle file detection and renaming
+├── error_handler.py     # Exception mapping + retry logic
+├── exceptions.py        # Custom exception classes
+├── ffmpeg_utils.py      # FFmpeg detection and path resolution
+├── assets/
+│   └── icon.ico
+├── templates/
+│   └── index.html       # Web UI
+└── static/              # CSS/JS assets
+tests/
+├── __init__.py
+├── test_config.py
+├── test_exceptions.py
+├── test_ffmpeg_utils.py
+├── test_downloader.py
+├── test_subtitle_manager.py
+├── test_error_handler.py
+└── test_app.py
 ```
 
 ---
@@ -150,36 +119,45 @@ youtube-downloader/
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/` | Web UI |
-| `GET` | `/api/health` | Server health check |
-| `GET` | `/api/video/info` | Fetch video metadata |
-| `POST` | `/api/download` | Full download (video + subtitle) |
-| `POST` | `/api/download/subtitle` | Subtitle only |
-| `POST` | `/api/download/video` | Video only |
+| `GET` | `/api/state` | Current download state |
+| `POST` | `/api/download` | Start download |
 | `POST` | `/api/cancel` | Cancel current download |
-| `GET` | `/api/progress` | Current progress status |
-| `GET` | `/api/downloads` | List downloaded files |
-| `GET` | `/api/download/file` | Download a file |
-| `DELETE` | `/api/download/file` | Delete a file |
-| `GET` | `/api/anti-ban/status` | Anti-ban system status |
-| `POST` | `/api/anti-ban/reset` | Reset anti-ban session |
-| `POST` | `/api/cookies/set` | Set cookies (paste) |
-| `POST` | `/api/cookies/upload` | Upload cookies file |
-| `GET` | `/api/cookies/status` | Cookies status |
-| `DELETE` | `/api/cookies/remove` | Remove cookies |
+| `GET` | `/api/info?url=` | Get video metadata |
+| `GET` | `/api/languages` | Supported languages |
+| `GET` | `/api/download-dir` | Get download directory |
+| `POST` | `/api/download-dir` | Set download directory |
 | `WS` | `/ws` | Real-time progress updates |
 
 ---
 
-## Cookies (رفع حد التحميل)
+## Architecture
 
-YouTube يحد من التحميل المجهول بقوة. استخدام الكوكيز **يرفع الحد بشكل كبير**:
+### Threading Model
+- Download runs in a **background thread** (NOT asyncio)
+- Communication via `queue.Queue` — background thread NEVER touches FastAPI objects
+- Cancellation via `threading.Event`
+- State machine: `IDLE → RUNNING → FINISHED → IDLE`
 
-1. ثبّت إضافة [cookies.txt export](https://chromewebstore.google.com)
-2. سجّل الدخول ليوتيوب في المتصفح
-3. اضغط على الإضافة → **Copy** أو **Export**
-4. الصق المحتوى أو ارفع الملف في الواجهة
+### Subtitle Handling
+- Subtitles saved as **separate files** (`.srt`/`.vtt`) alongside the video
+- Detection uses **file modification time** (not title string matching)
+- Language matching uses **prefix matching** (ar → ar, ar-SA, ar-EG)
+- Naming convention: `{title}_SUBTITLE_{lang}.{format}`
 
-مع الكوكيز: **~50 طلب/جلسة** | بدون: **~15 طلب/جلسة**
+---
+
+## Running Tests
+
+```bash
+# Install test dependencies
+pip install pytest pytest-asyncio httpx
+
+# Run all tests
+pytest tests/ -v
+
+# Run specific test file
+pytest tests/test_downloader.py -v
+```
 
 ---
 
@@ -190,7 +168,7 @@ MIT License — feel free to use and modify.
 ---
 
 <div align="center">
-  <sub>Built with ❤️ using Python, FastAPI, and Flet</sub>
+  <sub>Built with ❤️ using Python, FastAPI, and yt-dlp</sub>
   <br>
-  <sub>DownTube v1.0.0</sub>
+  <sub>DownTube v3.0.0</sub>
 </div>
