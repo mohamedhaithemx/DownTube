@@ -46,7 +46,10 @@ from app.services.anti_block import (
 )
 from app.services.subtitle import check_subtitles, find_subtitle_file, rename_subtitle_file
 from app.services.progress import ProgressTracker
-from app.services.whisper_service import generate_subtitles as whisper_generate
+from app.services.whisper_service import (
+    generate_subtitles as whisper_generate,
+    is_whisper_available,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -320,36 +323,52 @@ class DownloadService:
                 if progress:
                     progress.update_phase_progress(100, message="تمت معالجة الترجمة")
             else:
-                # ── محاولة إنشاء الترجمة بالذكاء الاصطناعي ──
-                video_duration = info.get("duration", 0)
-                if video_duration and video_duration > MAX_VIDEO_DURATION_FOR_WHISPER:
-                    msg = f"الفيديو أطول من {MAX_VIDEO_DURATION_FOR_WHISPER//60} د — لن يتم إنشاء ترجمة"
+                # ── لا توجد ترجمة على يوتيوب ──
+                # نحاول Whisper لو كان مفعّلاً، وإلا نُخبر المستخدم بوضوح
+                if not is_whisper_available():
+                    # Whisper معطل — رسالة واضحة فوراً
+                    msg = (
+                        "لا توجد ترجمة عربية لهذا الفيديو على يوتيوب، "
+                        "وتوليد الترجمة بالذكاء الاصطناعي معطل. "
+                        "للتفعيل: اضبط WHISPER_ENABLED=true"
+                    )
                     logger.info(msg)
                     if progress:
                         progress.update_phase_progress(100, message=msg)
                 else:
-                    if progress:
-                        progress.update_phase_progress(
-                            0, message="الترجمة غير متاحة، جاري إنشائها بالذكاء الاصطناعي..."
-                        )
-                    video_file = self._find_video_file(output_dir, title)
-                    if video_file and os.path.isfile(video_file):
-                        subtitle_file = whisper_generate(
-                            video_path=video_file,
-                            output_dir=output_dir,
-                            title=title,
-                            lang=lang,
-                            progress=progress,
-                        )
-                        if subtitle_file:
-                            subtitle_type = "generated"
-                            logger.info("تم إنشاء الترجمة بالذكاء الاصطناعي: %s", subtitle_file)
-                        else:
-                            if progress:
-                                progress.update_phase_progress(100, message="فشل إنشاء الترجمة")
+                    # Whisper مفعّل — نحاول لكن مع فحص مدة الفيديو
+                    video_duration = info.get("duration", 0)
+                    if video_duration and video_duration > MAX_VIDEO_DURATION_FOR_WHISPER:
+                        msg = f"الفيديو أطول من {MAX_VIDEO_DURATION_FOR_WHISPER//60} د — لن يتم إنشاء ترجمة"
+                        logger.info(msg)
+                        if progress:
+                            progress.update_phase_progress(100, message=msg)
                     else:
                         if progress:
-                            progress.update_phase_progress(100, message="لم يتم العثور على ملف الفيديو للترجمة")
+                            progress.update_phase_progress(
+                                0, message="الترجمة غير متاحة على يوتيوب، جاري إنشائها بالذكاء الاصطناعي..."
+                            )
+                        video_file = self._find_video_file(output_dir, title)
+                        if video_file and os.path.isfile(video_file):
+                            subtitle_file = whisper_generate(
+                                video_path=video_file,
+                                output_dir=output_dir,
+                                title=title,
+                                lang=lang,
+                                progress=progress,
+                            )
+                            if subtitle_file:
+                                subtitle_type = "generated"
+                                logger.info("تم إنشاء الترجمة بالذكاء الاصطناعي: %s", subtitle_file)
+                            else:
+                                if progress:
+                                    progress.update_phase_progress(
+                                        100,
+                                        message="فشل أو انتهى وقت توليد الترجمة — الفيديو بدون ترجمة"
+                                    )
+                        else:
+                            if progress:
+                                progress.update_phase_progress(100, message="لم يتم العثور على ملف الفيديو للترجمة")
         else:
             if progress:
                 progress.update_phase_progress(100, message="تم تخطي الترجمة")

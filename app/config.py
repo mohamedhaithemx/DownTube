@@ -45,10 +45,15 @@ PRE_DOWNLOAD_DELAY_MIN = 3.0 # ثواني — delay قبل yt-dlp download
 PRE_DOWNLOAD_DELAY_MAX = 6.0 # ثواني
 
 # ── إعدادات Whisper (لتوليد الترجمة بالذكاء الاصطناعي) ────
+# ⚠️ Whisper معطل افتراضياً لأنه بطيء جداً على CPU
+# فعّله فقط لو عندك GPU أو تقبل الانتظار
+WHISPER_ENABLED = os.environ.get("WHISPER_ENABLED", "false").lower() == "true"
 WHISPER_MODEL_SIZE = "tiny"              # tiny, base, small, medium, large
 WHISPER_DEVICE = "cpu"                   # cpu أو cuda
 WHISPER_COMPUTE_TYPE = "int8"            # int8, float16, float32
+WHISPER_BEAM_SIZE = 1                    # 1 = أسرع (كان 5)، 5 = أدق لكن 5x أبطأ
 MAX_VIDEO_DURATION_FOR_WHISPER = 900     # 15 دقيقة (بالثواني)
+WHISPER_TIMEOUT = int(os.environ.get("WHISPER_TIMEOUT", "120"))  # حد أقصى بالثواني للعملية كلها
 
 # ── أنماط روابط يوتيوب الصحيحة ──────────────────────────────
 VALID_URL_PATTERNS = [

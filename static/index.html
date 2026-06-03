@@ -499,14 +499,17 @@
                     </a>`;
                     if (data.result.subtitle_requested) {
                         if (data.result.subtitle_file) {
-                            const subType = data.result.subtitle_type === 'official' ? 'رسمية' : 'تلقائية';
+                            let subLabel = 'تلقائية';
+                            if (data.result.subtitle_type === 'official') subLabel = 'رسمية';
+                            else if (data.result.subtitle_type === 'generated') subLabel = 'AI';
                             html += `<a href="/api/download/${did}/subtitle" class="flex-1 flex items-center justify-center gap-2 bg-white/10 border border-white/20 rounded-xl py-3 px-4 font-bold text-sm hover:bg-white/20 transition">
-                                <span>📝</span> تحميل الترجمة (${subType})
+                                <span>📝</span> تحميل الترجمة (${subLabel})
                             </a>`;
                         } else {
                             html += `<div class="flex-1 flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-xl py-3 px-4 font-bold text-sm text-white/30 cursor-not-allowed">
                                 <span>📝</span> الترجمة غير متاحة
                             </div>`;
+                            html += `</div><p class="text-yellow-400/60 text-xs mt-2">لم يتم العثور على ترجمة عربية — تأكد من تفعيل WHISPER_ENABLED=true لتوليدها بالذكاء الاصطناعي</p><div class="flex flex-row gap-2 mt-2">`;
                         }
                     }
                     html += '</div>';
