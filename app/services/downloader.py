@@ -250,11 +250,12 @@ class DownloadService:
             extra_opts["subtitlesformat"] = SUBTITLE_PREFERRED_FORMAT
 
         # إعداد خيارات مكافحة الحظر
-        extra_opts["sleep_interval_requests"] = 5
-        extra_opts["sleep_interval"] = 3
+        extra_opts["sleep_interval_requests"] = 15
+        extra_opts["sleep_interval"] = 5
         extra_opts["extractor_retries"] = 3
         extra_opts["file_access_retries"] = 3
         extra_opts["ignoreerrors"] = True
+        extra_opts["extractor_args"] = {"youtube": {"player_client": ["android"]}}
 
         if ffmpeg_location is not None:
             extra_opts["ffmpeg_location"] = ffmpeg_location

@@ -45,9 +45,8 @@ PRE_DOWNLOAD_DELAY_MIN = 3.0 # ثواني — delay قبل yt-dlp download
 PRE_DOWNLOAD_DELAY_MAX = 6.0 # ثواني
 
 # ── إعدادات Whisper (لتوليد الترجمة بالذكاء الاصطناعي) ────
-# ⚠️ Whisper معطل افتراضياً لأنه بطيء جداً على CPU
-# فعّله فقط لو عندك GPU أو تقبل الانتظار
-WHISPER_ENABLED = os.environ.get("WHISPER_ENABLED", "false").lower() == "true"
+# ✅ مفعّل افتراضياً مع timeout آمن (120 ثانية) و beam_size=1 للسرعة
+WHISPER_ENABLED = os.environ.get("WHISPER_ENABLED", "true").lower() == "true"
 WHISPER_MODEL_SIZE = "tiny"              # tiny, base, small, medium, large
 WHISPER_DEVICE = "cpu"                   # cpu أو cuda
 WHISPER_COMPUTE_TYPE = "int8"            # int8, float16, float32

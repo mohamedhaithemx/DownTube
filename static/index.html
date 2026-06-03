@@ -509,10 +509,12 @@
                             html += `<div class="flex-1 flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-xl py-3 px-4 font-bold text-sm text-white/30 cursor-not-allowed">
                                 <span>📝</span> الترجمة غير متاحة
                             </div>`;
-                            html += `</div><p class="text-yellow-400/60 text-xs mt-2">لم يتم العثور على ترجمة عربية — تأكد من تفعيل WHISPER_ENABLED=true لتوليدها بالذكاء الاصطناعي</p><div class="flex flex-row gap-2 mt-2">`;
                         }
                     }
                     html += '</div>';
+                    if (data.result.subtitle_requested && !data.result.subtitle_file) {
+                        html += `<p class="text-yellow-400/60 text-xs mt-2">لم يتم العثور على ترجمة عربية — يتم إنشاؤها تلقائياً إن أمكن</p>`;
+                    }
                 } else {
                     // Fallback: عرض أسماء الملفات القديمة
                     if (data.result.video_file) {
