@@ -197,7 +197,7 @@ uvicorn downtube.app.main:app --host 0.0.0.0 --port 8000
 ---
 
 <div align="center">
-  <p>صنع في 🇪🇬 | Made with ❤️ by ZET Dev</p>
+  <p>Made by ZET Dev</p>
   <p>
     <a href="https://github.com/mohamedhaithemx/DownTube">GitHub</a> •
     <a href="https://console.groq.com">Groq Console</a>
