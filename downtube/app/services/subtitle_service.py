@@ -138,7 +138,7 @@ async def fetch_subtitles(
             output_dir=output_dir,
             task_id=task_id,
             title=video_title,
-            progress_callback=lambda p, s, e: progress_callback(p, s, e, "جاري توليد الترجمة...") if progress_callback else None,
+            progress_callback=lambda p, s, e, msg="": progress_callback(p, s, e, msg or "جاري توليد الترجمة...") if progress_callback else None,
         )
 
         if srt_path and os.path.exists(srt_path):
