@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,10 @@ def merge_short_segments(segments: list[dict], min_duration: float = 1.0) -> lis
 
 
 def translate_segments_to_arabic(segments: list[dict], video_title: str = "", client=None) -> list[dict]:
+    """
+    ترجمة المقاطع إلى العربية باستخدام Groq Llama 3.3 70B.
+    يُرسل النصوص على شكل JSON ويستقبل ترجمات JSON لضمان الدقة.
+    """
     from groq import Groq
 
     if client is None:
@@ -50,53 +55,110 @@ def translate_segments_to_arabic(segments: list[dict], video_title: str = "", cl
     if not text_parts:
         return segments
 
-    batch_size = 30
+    batch_size = 50  # 70B يتعامل مع context أكبر بكفاءة
     translated_segments = list(segments)
 
-    batch_models = ["llama-3.2-3b-preview"]
+    model = "llama-3.3-70b-versatile"
 
     for batch_start in range(0, len(text_parts), batch_size):
         batch_texts = text_parts[batch_start:batch_start + batch_size]
-        numbered = "\n".join(f"[{i+1}] {t}" for i, t in enumerate(batch_texts))
+
+        # إرسال النصوص كـ JSON array لضمان دقة الاستجابة
+        texts_json = json.dumps(batch_texts, ensure_ascii=False)
 
         prompt = (
-            f"أنت مترجم محترف. ترجم النص التالي من مقطع فيديو إلى العربية الفصحى الطبيعية.\n\n"
+            "أنت مترجم محترف. ترجم النصوص التالية من الإنجليزية إلى العربية الفصحى السهلة.\n\n"
+            "القواعد:\n"
+            "- الترجمة يجب أن تكون طبيعية وسلسة كما يتكلم الإنسان، ليست حرفية\n"
+            "- حافظ على المعنى الكامل والسياق\n"
+            "- المصطلحات التقنية: اتركها بالإنجليزية أو اكتبها بين قوسين\n"
+            "- الأرقام والأسماء الخاصة: اتركها كما هي\n"
+            "- أعد JSON فقط، بدون أي نص إضافي:\n"
+            '{"translations": ["الترجمة 0", "الترجمة 1", ...]}\n\n'
             f"عنوان الفيديو: {video_title if video_title else 'غير معروف'}\n\n"
-            f"تعليمات:\n"
-            f"- ترجم ترجمة طبيعية سلسة، وليس حرفية كلمة بكلمة\n"
-            f"- حافظ على المعنى ولكن استخدم تعابير عربية طبيعية\n"
-            f"- حافظ على علامات الترقيم العربية الصحيحة\n"
-            f"- أخرج الترجمة بنفس تنسيق الإدخال: [1] النص المترجم [2] النص المترجم ... إلخ\n"
-            f"- عدد الأسطر يجب أن يكون بالضبط {len(batch_texts)}\n\n"
-            f"النص:\n{numbered}"
+            f"النصوص:\n{texts_json}"
         )
 
         try:
             response = client.chat.completions.create(
-                model=batch_models[0],
+                model=model,
                 messages=[
-                    {"role": "system", "content": "أنت مترجم محترف للعربية. ترجم النصوص ترجمة طبيعية سلسة."},
+                    {
+                        "role": "system",
+                        "content": (
+                            "أنت مترجم محترف للعربية. ترجم النصوص ترجمة طبيعية سلسة. "
+                            "أعد النتيجة كـ JSON فقط بالتنسيق: "
+                            '{"translations": ["ترجمة 1", "ترجمة 2", ...]}'
+                        ),
+                    },
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.3,
-                max_tokens=2048,
+                max_tokens=4096,
+                response_format={"type": "json_object"},
             )
             translated = response.choices[0].message.content.strip()
-            translated_lines = _parse_numbered_response(translated, len(batch_texts))
+
+            # محاولة تحليل JSON
+            translated_lines = _parse_json_translations(translated, len(batch_texts))
+
             if len(translated_lines) == len(batch_texts):
                 for i, tline in enumerate(translated_lines):
                     idx = batch_start + i
                     if idx < len(translated_segments):
                         translated_segments[idx]["text"] = tline
             else:
-                logger.warning("عدد الأسطر المترجمة (%d) لا يساوي المدخل (%d)", len(translated_lines), len(batch_texts))
+                logger.warning(
+                    "عدد الترجمات (%d) لا يساوي المدخل (%d) — محاولة مطابقة جزئية",
+                    len(translated_lines), len(batch_texts),
+                )
+                # مطابقة جزئية: املأ بقدر ما أمكن
+                for i, tline in enumerate(translated_lines):
+                    idx = batch_start + i
+                    if idx < len(translated_segments):
+                        translated_segments[idx]["text"] = tline
+
+        except json.JSONDecodeError as e:
+            logger.warning("فشل تحليل JSON من %s: %s — محاولة استخراج يدوي", model, e)
+            translated_lines = _parse_numbered_response(translated if 'translated' in dir() else "", len(batch_texts))
+            for i, tline in enumerate(translated_lines):
+                idx = batch_start + i
+                if idx < len(translated_segments):
+                    translated_segments[idx]["text"] = tline
         except Exception as e:
-            logger.warning("فشلت الترجمة بالموديل %s: %s", batch_models[0], e)
+            logger.warning("فشلت الترجمة بالموديل %s: %s", model, e)
 
     return translated_segments
 
 
+def _parse_json_translations(text: str, expected_count: int) -> list[str]:
+    """تحليل استجابة JSON من الموديل"""
+    try:
+        data = json.loads(text)
+        if "translations" in data and isinstance(data["translations"], list):
+            translations = data["translations"]
+            if len(translations) >= expected_count:
+                return [str(t).strip() for t in translations[:expected_count]]
+            return [str(t).strip() for t in translations]
+    except (json.JSONDecodeError, TypeError, KeyError):
+        pass
+
+    # محاولة استخراج JSON من النص
+    json_match = re.search(r'\{[^{}]*"translations"\s*:\s*\[.*?\][^{}]*\}', text, re.DOTALL)
+    if json_match:
+        try:
+            data = json.loads(json_match.group())
+            if "translations" in data and isinstance(data["translations"], list):
+                return [str(t).strip() for t in data["translations"][:expected_count]]
+        except (json.JSONDecodeError, TypeError, KeyError):
+            pass
+
+    # Fallback: استخراج يدوي
+    return _parse_numbered_response(text, expected_count)
+
+
 def _parse_numbered_response(text: str, expected_count: int) -> list[str]:
+    """استخراج الترجمات من تنسيق مرقم (fallback)"""
     lines = []
     for line in text.split("\n"):
         line = line.strip()
