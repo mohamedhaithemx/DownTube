@@ -35,6 +35,20 @@ INDEX_HTML = FRONTEND_DIR / "index.html"
 async def lifespan(app: FastAPI):
     logger.info("DownTube — ZET Dev قيد التشغيل")
     ensure_temp_dir()
+
+    # ── تحميل النماذج المحلية مسبقاً في الخلفية ──
+    async def _warm_load():
+        try:
+            from app.services.groq_service import initialize_whisper_model
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, initialize_whisper_model)
+            logger.info("تم تحميل نموذج faster-whisper مسبقاً")
+        except Exception as e:
+            logger.warning("فشل تحميل النموذج مسبقاً: %s — سيُحمّل عند أول طلب", e)
+
+    asyncio.create_task(_warm_load())
+    logger.info("DownTube ready — models loading in background")
+
     yield
     logger.info("DownTube يتوقف")
     for d in TEMP_DIR.iterdir():
