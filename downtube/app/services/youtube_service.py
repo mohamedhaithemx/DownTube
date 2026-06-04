@@ -117,12 +117,6 @@ async def download_video(
                 "preferredcodec": "mp3",
                 "preferredquality": "192",
             })
-        else:
-            postprocessors.append({
-                "key": "FFmpegAudioConvertor",
-                "preferredcodec": "aac",
-                "preferredquality": "192",
-            })
         opts = {
             **YDL_OPTS_BASE,
             "outtmpl": f"{output_dir}/%(title)s.%(ext)s",
