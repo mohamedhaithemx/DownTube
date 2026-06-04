@@ -1,8 +1,13 @@
 import os
 import asyncio
 import logging
+import subprocess
+import shlex
+import re
+import random
+import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Optional
 
 import yt_dlp
 
@@ -12,25 +17,28 @@ logger = logging.getLogger(__name__)
 
 _executor = ThreadPoolExecutor(max_workers=2)
 
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Safari/537.36"
-)
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+]
 
 YDL_OPTS_BASE = {
     "quiet": True,
     "no_warnings": True,
     "nocheckcertificate": True,
     "extract_flat": False,
-    "user_agent": USER_AGENT,
-    "retries": 3,
-    "fragment_retries": 3,
+    "retries": 2,
+    "fragment_retries": 2,
     "socket_timeout": 30,
+    "extractor_args": {"youtube": {"skip": ["dash", "hls"]}},
+    "sleep_interval_requests": 0.5,
 }
 
-YDL_RETRIES = 3
-YDL_DELAY = 3
+YDL_RETRIES = 2
+YDL_DELAY = 5
 
 
 class YouTubeError(Exception):
@@ -57,9 +65,16 @@ def _map_ydl_error(err_msg: str) -> str:
     return ERROR_MESSAGES["download_failed"]
 
 
+def _make_ydl_opts(**extra) -> dict:
+    opts = {**YDL_OPTS_BASE}
+    opts["user_agent"] = random.choice(USER_AGENTS)
+    opts.update(extra)
+    return opts
+
+
 async def extract_info(url: str) -> dict[str, Any]:
     def _sync_extract():
-        opts = {**YDL_OPTS_BASE}
+        opts = _make_ydl_opts()
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=False)
 
@@ -76,6 +91,8 @@ async def extract_info(url: str) -> dict[str, Any]:
                 continue
             raise YouTubeError(_map_ydl_error(err_msg), status_code=403 if "private" in err_msg.lower() else 404)
         except Exception as e:
+            if isinstance(e, YouTubeError):
+                raise
             logger.exception("خطأ غير متوقع في extract_info")
             raise YouTubeError(ERROR_MESSAGES["internal_error"], status_code=500)
 
@@ -117,14 +134,13 @@ async def download_video(
                 "preferredcodec": "mp3",
                 "preferredquality": "192",
             })
-        opts = {
-            **YDL_OPTS_BASE,
-            "outtmpl": f"{output_dir}/%(title)s.%(ext)s",
-            "format": fmt,
-            "merge_output_format": "mp4",
-            "progress_hooks": [progress_hook],
-            "postprocessors": postprocessors,
-        }
+        opts = _make_ydl_opts(
+            outtmpl=f"{output_dir}/%(title)s.%(ext)s",
+            format=fmt,
+            merge_output_format="mp4",
+            progress_hooks=[progress_hook],
+            postprocessors=postprocessors,
+        )
         if cancel_event:
             opts["nooverwrites"] = True
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -178,17 +194,16 @@ async def download_audio(
                 progress_callback(100, 0, 0)
 
     def _sync_dl():
-        opts = {
-            **YDL_OPTS_BASE,
-            "outtmpl": f"{output_dir}/%(title)s.%(ext)s",
-            "format": "bestaudio/best",
-            "postprocessors": [{
+        opts = _make_ydl_opts(
+            outtmpl=f"{output_dir}/%(title)s.%(ext)s",
+            format="bestaudio/best",
+            postprocessors=[{
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
                 "preferredquality": "192",
             }],
-            "progress_hooks": [progress_hook],
-        }
+            progress_hooks=[progress_hook],
+        )
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
@@ -196,3 +211,82 @@ async def download_audio(
 
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, _sync_dl)
+
+
+async def embed_subtitles(
+    video_path: str,
+    subtitle_path: str,
+    output_dir: str,
+    progress_callback: callable = None,
+    cancel_event: "threading.Event" = None,
+) -> str:
+    def _sync_embed():
+        base, ext = os.path.splitext(os.path.basename(video_path))
+        output_path = os.path.join(output_dir, f"{base}_embedded{ext}")
+
+        # Method 1: Soft subtitles via mov_text (instant, no re-encode)
+        cmd_soft = [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", subtitle_path,
+            "-c:v", "copy",
+            "-c:a", "copy",
+            "-c:s", "mov_text",
+            "-metadata:s:s:0", "language=ara",
+            output_path,
+        ]
+        logger.info("محاولة دمج soft subtitles عبر mov_text")
+        result_soft = subprocess.run(cmd_soft, capture_output=True, text=True, timeout=120)
+        if result_soft.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            logger.info("تم الدمج بنجاح عبر mov_text (soft)")
+            return output_path
+
+        # Method 2: Hardsub via subtitles filter (slow but reliable)
+        logger.warning("mov_text فشل، تجربة hardsub: %s", result_soft.stderr)
+        output_path = os.path.join(output_dir, f"{base}_embedded{ext}")
+        total_duration = 0
+        dur_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", video_path]
+        dur_result = subprocess.run(dur_cmd, capture_output=True, text=True, timeout=30)
+        try:
+            total_duration = float(dur_result.stdout.strip())
+        except (ValueError, TypeError):
+            total_duration = 0
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-vf", f"subtitles={shlex.quote(subtitle_path)}",
+            "-preset", "ultrafast",
+            "-crf", "28",
+            "-c:a", "copy",
+            output_path,
+        ]
+        process = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True)
+
+        last_pct = -1
+        time_pattern = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
+        while True:
+            line = process.stderr.readline()
+            if not line and process.poll() is not None:
+                break
+            if cancel_event and cancel_event.is_set():
+                process.kill()
+                raise RuntimeError("تم إلغاء دمج الترجمة")
+
+            m = time_pattern.search(line)
+            if m and total_duration > 0:
+                hh, mm, ss, ms = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+                current_time = hh * 3600 + mm * 60 + ss + ms / 100
+                pct = min(99, (current_time / total_duration) * 100)
+                if int(pct) != last_pct:
+                    last_pct = int(pct)
+                    if progress_callback:
+                        progress_callback(pct, 0, 0)
+
+        returncode = process.wait()
+        if returncode != 0:
+            raise RuntimeError(f"فشل دمج الترجمة (hardsub): خطأ {returncode}")
+        return output_path
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, _sync_embed)

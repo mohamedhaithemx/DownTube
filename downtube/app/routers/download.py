@@ -1,5 +1,6 @@
 import os
 import asyncio
+import threading
 import logging
 from typing import Optional
 
@@ -7,7 +8,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Qu
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from app.services.youtube_service import download_video, YouTubeError
+from app.services.youtube_service import download_video, embed_subtitles, YouTubeError
 from app.services.subtitle_service import fetch_subtitles
 from app.utils.file_manager import (
     get_task_dir,
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/api/v1/download", tags=["download"])
 
 active_tasks: dict[str, asyncio.Event] = {}
 active_websockets: dict[str, list[WebSocket]] = {}
-cancel_events: dict[str, asyncio.Event] = {}
+cancel_events: dict[str, threading.Event] = {}
 
 
 class DownloadRequest(BaseModel):
@@ -33,6 +34,7 @@ class DownloadRequest(BaseModel):
     include_subtitles: bool = True
     auto_generate: bool = True
     embed_subtitles: bool = False
+    subtitle_only: bool = False
     task_id: Optional[str] = None
 
 
@@ -75,7 +77,7 @@ async def start_download(req: DownloadRequest):
         raise HTTPException(status_code=409, detail="هناك تحميل قيد التشغيل بالفعل لهذه المهمة")
 
     active_tasks[task_id] = asyncio.Event()
-    cancel_events[task_id] = asyncio.Event()
+    cancel_events[task_id] = threading.Event()
 
     asyncio.create_task(_process_download(task_id, req))
 
@@ -84,6 +86,7 @@ async def start_download(req: DownloadRequest):
 
 async def _process_download(task_id: str, req: DownloadRequest):
     output_dir = str(get_task_dir(task_id))
+    loop = asyncio.get_running_loop()
     progress_cb = _progress_cb_factory(task_id)
     cancel_event = cancel_events.get(task_id)
 
@@ -91,6 +94,46 @@ async def _process_download(task_id: str, req: DownloadRequest):
         await _broadcast(task_id, {"status": "info", "percent": 0, "message": "جاري البدء..."})
         await asyncio.sleep(0.5)
 
+        # ── Subtitle-only mode: skip video download entirely ──
+        if req.subtitle_only:
+            await _broadcast(task_id, {
+                "status": "info", "percent": 10, "message": "جاري جلب الترجمة..."
+            })
+            subtitle_result = None
+            try:
+                subtitle_result = await fetch_subtitles(
+                    url=req.url,
+                    output_dir=output_dir,
+                    task_id=task_id,
+                    auto_generate=True,
+                    progress_callback=progress_cb,
+                )
+            except Exception as e:
+                logger.warning("فشل جلب الترجمة: %s", e)
+                subtitle_result = {"path": None, "source": None, "type": "none"}
+
+            if cancel_event and cancel_event.is_set():
+                await _broadcast(task_id, {"status": "cancelled"})
+                return
+
+            subtitle_file = find_subtitle_file(task_id)
+            filesize = os.path.getsize(subtitle_file) if subtitle_file and os.path.exists(subtitle_file) else 0
+            await _broadcast(task_id, {
+                "status": "done",
+                "percent": 100,
+                "message": "اكتمل التحميل!",
+                "filename": os.path.basename(subtitle_file) if subtitle_file else "subtitles.srt",
+                "filesize": human_size(filesize),
+                "filesize_bytes": filesize,
+                "video_file": None,
+                "subtitle_file": subtitle_result.get("path") if subtitle_result else None,
+                "subtitle_type": subtitle_result.get("type", "none") if subtitle_result else "none",
+                "subtitle_source": subtitle_result.get("source", None) if subtitle_result else None,
+                "subtitle_only": True,
+            })
+            return
+
+        # ── Normal flow: subtitles + video ──
         subtitle_result = None
         if req.include_subtitles:
             await _broadcast(task_id, {
@@ -151,6 +194,32 @@ async def _process_download(task_id: str, req: DownloadRequest):
             if video_file_candidates:
                 video_file = max(video_file_candidates, key=os.path.getsize)
 
+        # ── Embed subtitles into video if requested ──
+        embedded = False
+        if req.embed_subtitles and subtitle_file:
+            try:
+                await _broadcast(task_id, {
+                    "status": "info", "percent": 70, "message": "جاري دمج الترجمة في الفيديو..."
+                })
+                video_file = await embed_subtitles(
+                    video_file, subtitle_file, output_dir,
+                    progress_callback=lambda p, s, e: asyncio.run_coroutine_threadsafe(
+                        _broadcast(task_id, {
+                            "status": "embedding",
+                            "percent": 70 + round(p * 0.25, 1),
+                            "message": f"جاري دمج الترجمة... {round(p)}%"
+                        }), loop
+                    ),
+                    cancel_event=cancel_event,
+                )
+                subtitle_result = None
+                embedded = True
+            except asyncio.CancelledError:
+                await _broadcast(task_id, {"status": "cancelled"})
+                return
+            except Exception as e:
+                logger.warning("فشل دمج الترجمة: %s", e)
+
         filesize = os.path.getsize(video_file) if video_file and os.path.exists(video_file) else 0
 
         if subtitle_file and not subtitle_result:
@@ -167,6 +236,7 @@ async def _process_download(task_id: str, req: DownloadRequest):
             "subtitle_file": subtitle_result.get("path") if subtitle_result else None,
             "subtitle_type": subtitle_result.get("type", "none") if subtitle_result else "none",
             "subtitle_source": subtitle_result.get("source", None) if subtitle_result else None,
+            "embedded": embedded,
         })
 
     except asyncio.CancelledError:
@@ -206,7 +276,7 @@ async def download_file(task_id: str, file_type: str = Query("video", descriptio
 async def cancel_download(task_id: str):
     if task_id not in active_tasks and task_id not in cancel_events:
         raise HTTPException(status_code=409, detail="لا يوجد تحميل نشط لهذه المهمة")
-    cancel_events.get(task_id, asyncio.Event()).set()
+    cancel_events.get(task_id, threading.Event()).set()
     cleanup_task(task_id)
     return {"status": "cancelled"}
 

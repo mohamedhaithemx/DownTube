@@ -25,11 +25,51 @@ class App {
     document.getElementById('fetch-btn').addEventListener('click', () => this.videoInfo.fetch());
     document.getElementById('download-btn').addEventListener('click', () => this.downloader.start());
     document.getElementById('cancel-btn').addEventListener('click', () => this.downloader.cancel());
+    document.getElementById('restart-btn').addEventListener('click', () => this.downloader.restart());
+    document.getElementById('result-restart-btn').addEventListener('click', () => this.downloader.restart());
     document.getElementById('new-download-btn').addEventListener('click', () => this.resetUI());
+    document.getElementById('clear-btn').addEventListener('click', () => this._clearVideo());
     document.getElementById('retry-btn').addEventListener('click', () => this.resetUI());
     document.getElementById('url-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.videoInfo.fetch();
     });
+
+    document.getElementById('include-subtitles').addEventListener('change', (e) => {
+      const opts = document.getElementById('subtitle-options');
+      opts.classList.toggle('card-hidden', !e.target.checked);
+    });
+
+    document.querySelectorAll('input[name="embed-mode"]').forEach(el => {
+      el.addEventListener('change', (e) => this._onEmbedModeChange(e.target.value));
+    });
+
+    const initialMode = document.querySelector('input[name="embed-mode"]:checked')?.value || 'separate';
+    this._onEmbedModeChange(initialMode);
+  }
+
+  _onEmbedModeChange(mode) {
+    const qSec = document.getElementById('quality-section');
+    const btnText = document.getElementById('download-btn-text');
+    if (mode === 'subtitle-only') {
+      qSec.classList.add('hidden');
+      btnText.textContent = 'تحميل الترجمة';
+    } else {
+      qSec.classList.remove('hidden');
+      btnText.textContent = 'تحميل الآن';
+    }
+  }
+
+  _clearVideo() {
+    this.videoInfo.data = null;
+    this.videoInfo.cache = new Map();
+    document.getElementById('url-input').value = '';
+    document.getElementById('quality-selector').innerHTML = '';
+    document.getElementById('quality-section').classList.remove('hidden');
+    document.getElementById('subtitle-status').textContent = '';
+    document.getElementById('subtitle-status').className = 'subtitle-badge';
+    document.getElementById('subtitle-options').classList.add('card-hidden');
+    document.getElementById('download-btn-text').textContent = 'تحميل الآن';
+    this.showSection('input');
   }
 
   showSection(id) {
@@ -61,9 +101,14 @@ class App {
     document.getElementById('url-input').value = '';
     document.getElementById('fetch-btn').disabled = false;
     document.getElementById('quality-selector').innerHTML = '';
+    document.getElementById('quality-section').classList.remove('hidden');
     document.getElementById('subtitle-status').textContent = '';
     document.getElementById('subtitle-status').className = 'subtitle-badge';
     document.getElementById('subtitle-options').classList.add('card-hidden');
+    document.getElementById('restart-btn').style.display = 'none';
+    document.getElementById('result-restart-btn').style.display = 'none';
+    document.getElementById('download-btn-text').textContent = 'تحميل الآن';
+    this.videoInfo.cache = new Map();
     this.showSection('input');
   }
 
@@ -89,17 +134,26 @@ class VideoInfo {
     this.app = app;
     this.data = null;
     this.controller = null;
+    this.cache = new Map();
   }
 
   reset() {
     this.data = null;
     this.controller = null;
+    this.cache = new Map();
   }
 
   async fetch() {
     const url = document.getElementById('url-input').value.trim();
     if (!url) {
       this.app.showError('يرجى إدخال رابط يوتيوب');
+      return;
+    }
+
+    // Cache hit — show instantly
+    if (this.cache.has(url)) {
+      this.data = this.cache.get(url);
+      this.display(this.data);
       return;
     }
 
@@ -127,6 +181,11 @@ class VideoInfo {
       }
 
       this.data = await resp.json();
+      this.cache.set(url, this.data);
+      if (this.cache.size > 5) {
+        const first = this.cache.keys().next().value;
+        this.cache.delete(first);
+      }
       this.display(this.data);
     } catch (err) {
       if (err.name === 'AbortError') {
@@ -190,7 +249,10 @@ class VideoInfo {
       subStatus.textContent = '⚡ سيتم التوليد تلقائياً';
       subStatus.className = 'subtitle-badge pending';
     }
-    document.getElementById('subtitle-options').classList.remove('card-hidden');
+    document.getElementById('subtitle-options').classList.toggle('card-hidden', !document.getElementById('include-subtitles').checked);
+
+    const curMode = document.querySelector('input[name="embed-mode"]:checked')?.value || 'separate';
+    this.app._onEmbedModeChange(curMode);
 
     this.app.showSection('info');
   }
@@ -247,8 +309,10 @@ class Downloader {
     const qualityEl = document.querySelector('input[name="quality"]:checked');
     const formatId = qualityEl ? qualityEl.value : 'best';
     const includeSubs = document.getElementById('include-subtitles').checked;
-    const autoGenerate = document.getElementById('auto-generate').checked;
-    const embedSubs = document.querySelector('input[name="embed-mode"]:checked')?.value === 'embed';
+    const embedMode = document.querySelector('input[name="embed-mode"]:checked')?.value || 'separate';
+    const embedSubs = embedMode === 'embed';
+    const subtitleOnly = embedMode === 'subtitle-only';
+    const actualIncludeSubs = includeSubs || subtitleOnly;
 
     this.taskId = crypto.randomUUID ? crypto.randomUUID() : self.crypto.randomUUID();
 
@@ -256,8 +320,12 @@ class Downloader {
     this.app.showSection('progress');
     this.app.ui.resetProgress();
 
+    const btn = document.getElementById('download-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> جاري البدء...';
+
     this.controller = new AbortController();
-    const timeout = setTimeout(() => this.controller.abort(), 300000);
+    const timeout = setTimeout(() => this.controller.abort(), subtitleOnly ? 120000 : 300000);
 
     try {
       const resp = await fetch('/api/v1/download/video', {
@@ -266,9 +334,10 @@ class Downloader {
         body: JSON.stringify({
           url,
           format_id: formatId,
-          include_subtitles: includeSubs,
-          auto_generate: autoGenerate,
+          include_subtitles: actualIncludeSubs,
+          auto_generate: true,
           embed_subtitles: embedSubs,
+          subtitle_only: subtitleOnly,
           task_id: this.taskId,
         }),
         signal: this.controller.signal,
@@ -284,27 +353,46 @@ class Downloader {
       this.app.progressTracker.connect(this.taskId);
     } catch (err) {
       if (err.name === 'AbortError') {
-        this.app.showError('تم إلغاء التحميل');
+        this.app.showSection('input');
       } else {
         this.app.showError(err.message || 'حدث خطأ أثناء بدء التحميل');
       }
       this.app.showSection('input');
     } finally {
       clearTimeout(timeout);
+      const dlBtn = document.getElementById('download-btn');
+      const dlText = document.getElementById('download-btn-text');
+      if (dlBtn.disabled) {
+        dlBtn.disabled = false;
+        dlBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span id="download-btn-text">${dlText ? dlText.textContent : 'تحميل الآن'}</span>`;
+      }
     }
   }
 
-  async cancel() {
+  cancel() {
     if (!this.taskId) return;
-    if (this.controller) this.controller.abort();
-    try {
-      await fetch(`/api/v1/download/cancel/${this.taskId}`, { method: 'POST' });
-    } catch (err) {
-      // ignore
-    }
+    // Instant feedback — no await
+    document.getElementById('cancel-btn').disabled = true;
+    document.getElementById('restart-btn').style.display = '';
+    document.getElementById('progress-message').textContent = 'جاري الإلغاء...';
     this.app.progressTracker.disconnect();
-    this.app.showError('تم إلغاء التحميل');
-    this.app.showSection('input');
+    if (this.controller) this.controller.abort();
+    // Fire-and-forget — لا ننتظر الرد
+    fetch(`/api/v1/download/cancel/${this.taskId}`, { method: 'POST' }).catch(() => {});
+  }
+
+  restart() {
+    const url = document.getElementById('url-input').value.trim();
+    this.app.resetUI();
+    if (!url) return;
+    document.getElementById('url-input').value = url;
+    // Use cached data if available — instant, no network
+    if (this.app.videoInfo.data) {
+      document.getElementById('quality-selector').innerHTML = '';
+      this.app.videoInfo.display(this.app.videoInfo.data);
+    } else {
+      this.app.videoInfo.fetch();
+    }
   }
 }
 
@@ -366,7 +454,8 @@ class ProgressTracker {
         break;
 
       case 'downloading':
-        this.app.ui.setProgress(data.percent, data.message || 'جاري التحميل...', data.speed, data.eta);
+      case 'embedding':
+        this.app.ui.setProgress(data.percent, data.message || 'جاري المعالجة...', data.speed, data.eta);
         break;
 
       case 'done':
@@ -381,6 +470,9 @@ class ProgressTracker {
         break;
 
       case 'cancelled':
+        document.getElementById('cancel-btn').disabled = true;
+        document.getElementById('restart-btn').style.display = '';
+        document.getElementById('progress-message').textContent = 'تم الإلغاء';
         this.disconnect();
         break;
     }
@@ -407,6 +499,8 @@ class UIManager {
     document.getElementById('progress-speed').textContent = '';
     document.getElementById('progress-eta').textContent = '';
     document.getElementById('cancel-btn').disabled = false;
+    document.getElementById('cancel-btn').style.display = '';
+    document.getElementById('restart-btn').style.display = 'none';
   }
 
   setProgress(pct, message, speed, eta) {
@@ -436,22 +530,44 @@ class UIManager {
     const filesize = data.filesize || '';
     const filesizeBytes = data.filesize_bytes || 0;
 
-    document.getElementById('result-icon').textContent = '✅';
+    const badge = document.getElementById('result-badge');
+    if (data.subtitle_only) {
+      document.getElementById('result-icon').textContent = '📝';
+      badge.textContent = 'ترجمة فقط';
+      badge.className = 'result-badge subtitle-only';
+      badge.style.display = '';
+    } else if (data.embedded) {
+      document.getElementById('result-icon').textContent = '🎬';
+      badge.textContent = 'الترجمة مدمجة في الفيديو';
+      badge.className = 'result-badge embedded';
+      badge.style.display = '';
+    } else {
+      document.getElementById('result-icon').textContent = '✅';
+      badge.style.display = 'none';
+    }
+
     document.getElementById('result-filename').textContent = filename;
     document.getElementById('result-filesize').textContent = filesize;
 
+    document.getElementById('result-restart-btn').style.display = '';
+
     const dlVideo = document.getElementById('download-video-btn');
-    dlVideo.onclick = () => this._downloadFile(data.video_file);
-    dlVideo.style.display = '';
+    if (data.video_file && !data.subtitle_only) {
+      dlVideo.onclick = () => this._downloadFile(data.video_file);
+      dlVideo.style.display = '';
+    } else {
+      dlVideo.style.display = 'none';
+    }
 
     const dlSub = document.getElementById('download-subtitle-btn');
+    const subText = document.getElementById('download-subtitle-text');
     if (data.subtitle_file) {
       dlSub.onclick = () => this._downloadFile(data.subtitle_file);
       dlSub.style.display = '';
       const subType = data.subtitle_type === 'official' ? 'رسمية'
         : data.subtitle_type === 'generated' ? 'AI'
-        : 'تلقائية';
-      dlSub.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> تحميل الترجمة (${subType})`;
+        : '';
+      subText.textContent = subType ? `تحميل الترجمة (${subType})` : 'تحميل الترجمة';
     } else {
       dlSub.style.display = 'none';
     }
