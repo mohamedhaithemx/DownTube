@@ -38,6 +38,8 @@ class DownloadRequest(BaseModel):
     task_id: Optional[str] = None
 
 
+# ── WebSocket Helpers ────────────────────────────────────────────────
+
 async def _send_ws(ws: WebSocket, data: dict):
     try:
         await ws.send_json(data)
@@ -49,6 +51,67 @@ async def _broadcast(task_id: str, data: dict):
     for ws in active_websockets.get(task_id, []):
         await _send_ws(ws, data)
 
+
+# ── Combined Progress Tracker ────────────────────────────────────────
+
+class CombinedProgressTracker:
+    """
+    يتتبع تقدم المهام المتوازية (ترجمة + تحميل فيديو)
+    ويُبلغ عن نسبة مدمجة تتحرك بنعومة 1% في كل مرة.
+    """
+
+    def __init__(self, task_id: str):
+        self.task_id = task_id
+        self.subtitle_pct = 0.0   # 0-100
+        self.video_pct = 0.0      # 0-100
+        self.subtitle_weight = 0.6
+        self.video_weight = 0.4
+        self.last_reported = -1
+        self._lock = asyncio.Lock()
+
+    async def update_subtitle(self, pct: float):
+        async with self._lock:
+            self.subtitle_pct = min(100, pct)
+            await self._report()
+
+    async def update_video(self, pct: float):
+        async with self._lock:
+            self.video_pct = min(100, pct)
+            await self._report()
+
+    async def _report(self):
+        combined = self.subtitle_pct * self.subtitle_weight + self.video_pct * self.video_weight
+        combined = min(99, combined)
+        if int(combined) > self.last_reported:
+            self.last_reported = int(combined)
+            await _broadcast(self.task_id, {
+                "status": "progress",
+                "percent": round(combined, 1),
+                "stage": self._current_stage(),
+                "message": self._current_message(),
+            })
+
+    def _current_stage(self) -> str:
+        if self.subtitle_pct < 5:
+            return "audio_prep"
+        if self.subtitle_pct < 65:
+            return "transcribing"
+        if self.subtitle_pct < 90:
+            return "translating"
+        return "downloading"
+
+    def _current_message(self) -> str:
+        stage = self._current_stage()
+        messages = {
+            "audio_prep": "جاري تحضير الصوت...",
+            "transcribing": "جاري نسخ الصوت...",
+            "translating": "جاري ترجمة النص...",
+            "downloading": "جاري تحميل الفيديو...",
+        }
+        return messages.get(stage, "جاري المعالجة...")
+
+
+# ── Progress Callback Factories ──────────────────────────────────────
 
 def _progress_cb_factory(task_id: str):
     loop = asyncio.get_running_loop()
@@ -64,6 +127,24 @@ def _progress_cb_factory(task_id: str):
         asyncio.run_coroutine_threadsafe(_broadcast(task_id, msg), loop)
     return cb
 
+
+def _subtitle_progress_cb(tracker: CombinedProgressTracker):
+    """Callback لتحديث تقدم الترجمة عبر CombinedProgressTracker"""
+    loop = asyncio.get_running_loop()
+    def cb(pct: float, speed: float, eta: float, message: str = None):
+        asyncio.run_coroutine_threadsafe(tracker.update_subtitle(pct), loop)
+    return cb
+
+
+def _video_progress_cb(tracker: CombinedProgressTracker):
+    """Callback لتحديث تقدم تحميل الفيديو عبر CombinedProgressTracker"""
+    loop = asyncio.get_running_loop()
+    def cb(pct: float, speed: float, eta: float, message: str = None):
+        asyncio.run_coroutine_threadsafe(tracker.update_video(pct), loop)
+    return cb
+
+
+# ── Routes ───────────────────────────────────────────────────────────
 
 @router.post("/video")
 async def start_download(req: DownloadRequest):
@@ -87,157 +168,31 @@ async def start_download(req: DownloadRequest):
 async def _process_download(task_id: str, req: DownloadRequest):
     output_dir = str(get_task_dir(task_id))
     loop = asyncio.get_running_loop()
-    progress_cb = _progress_cb_factory(task_id)
     cancel_event = cancel_events.get(task_id)
 
     try:
-        await _broadcast(task_id, {"status": "info", "percent": 0, "message": "جاري البدء..."})
-        await asyncio.sleep(0.5)
+        await _broadcast(task_id, {
+            "status": "info", "percent": 1,
+            "stage": "starting",
+            "message": "جاري البدء...",
+        })
+        await asyncio.sleep(0.3)
 
-        # ── Subtitle-only mode: skip video download entirely ──
+        # ── Subtitle-only mode: لا تحميل فيديو ──
         if req.subtitle_only:
-            await _broadcast(task_id, {
-                "status": "info", "percent": 10, "message": "جاري جلب الترجمة..."
-            })
-            subtitle_result = None
-            try:
-                subtitle_result = await fetch_subtitles(
-                    url=req.url,
-                    output_dir=output_dir,
-                    task_id=task_id,
-                    auto_generate=True,
-                    progress_callback=progress_cb,
-                )
-            except Exception as e:
-                logger.warning("فشل جلب الترجمة: %s", e)
-                subtitle_result = {"path": None, "source": None, "type": "none"}
-
-            if cancel_event and cancel_event.is_set():
-                await _broadcast(task_id, {"status": "cancelled"})
-                return
-
-            subtitle_file = find_subtitle_file(task_id)
-            filesize = os.path.getsize(subtitle_file) if subtitle_file and os.path.exists(subtitle_file) else 0
-            await _broadcast(task_id, {
-                "status": "done",
-                "percent": 100,
-                "message": "اكتمل التحميل!",
-                "filename": os.path.basename(subtitle_file) if subtitle_file else "subtitles.srt",
-                "filesize": human_size(filesize),
-                "filesize_bytes": filesize,
-                "video_file": None,
-                "subtitle_file": subtitle_result.get("path") if subtitle_result else None,
-                "subtitle_type": subtitle_result.get("type", "none") if subtitle_result else "none",
-                "subtitle_source": subtitle_result.get("source", None) if subtitle_result else None,
-                "subtitle_only": True,
-            })
+            await _process_subtitle_only(task_id, req, output_dir, cancel_event)
             return
 
-        # ── Normal flow: subtitles + video ──
-        subtitle_result = None
-        if req.include_subtitles:
-            await _broadcast(task_id, {
-                "status": "info", "percent": 5, "message": "جاري فحص الترجمات..."
-            })
-            try:
-                subtitle_result = await fetch_subtitles(
-                    url=req.url,
-                    output_dir=output_dir,
-                    task_id=task_id,
-                    auto_generate=req.auto_generate,
-                    progress_callback=progress_cb,
-                )
-            except Exception as e:
-                logger.warning("فشل جلب الترجمة: %s", e)
-                subtitle_result = {"path": None, "source": None, "type": "none"}
+        # ── Normal flow ──
+        # تحقق: هل نحتاج ترجمة مدمجة؟ إذا نعم → تسلسلي، إذا لا → متوازي
+        needs_embed = req.embed_subtitles and req.include_subtitles
 
-        if cancel_event and cancel_event.is_set():
-            await _broadcast(task_id, {"status": "cancelled"})
-            return
-
-        await _broadcast(task_id, {
-            "status": "downloading",
-            "percent": 20,
-            "message": "جاري تحميل الفيديو..."
-        })
-
-        try:
-            video_path = await download_video(
-                url=req.url,
-                output_dir=output_dir,
-                format_id=req.format_id,
-                progress_callback=progress_cb,
-                cancel_event=cancel_event,
-            )
-        except asyncio.CancelledError:
-            await _broadcast(task_id, {"status": "cancelled"})
-            return
-        except YouTubeError as e:
-            await _broadcast(task_id, {"status": "error", "message": e.message})
-            return
-
-        if cancel_event and cancel_event.is_set():
-            await _broadcast(task_id, {"status": "cancelled"})
-            return
-
-        video_file = video_path
-        subtitle_file = find_subtitle_file(task_id) if subtitle_result and subtitle_result.get("path") else None
-
-        if not video_file:
-            video_file = find_video_file(task_id)
-        if not video_file:
-            video_file_candidates = [
-                os.path.join(output_dir, f)
-                for f in os.listdir(output_dir)
-                if os.path.isfile(os.path.join(output_dir, f))
-            ]
-            if video_file_candidates:
-                video_file = max(video_file_candidates, key=os.path.getsize)
-
-        # ── Embed subtitles into video if requested ──
-        embedded = False
-        if req.embed_subtitles and subtitle_file:
-            try:
-                await _broadcast(task_id, {
-                    "status": "info", "percent": 70, "message": "جاري دمج الترجمة في الفيديو..."
-                })
-                video_file = await embed_subtitles(
-                    video_file, subtitle_file, output_dir,
-                    progress_callback=lambda p, s, e: asyncio.run_coroutine_threadsafe(
-                        _broadcast(task_id, {
-                            "status": "embedding",
-                            "percent": 70 + round(p * 0.25, 1),
-                            "message": f"جاري دمج الترجمة... {round(p)}%"
-                        }), loop
-                    ),
-                    cancel_event=cancel_event,
-                )
-                subtitle_result = None
-                embedded = True
-            except asyncio.CancelledError:
-                await _broadcast(task_id, {"status": "cancelled"})
-                return
-            except Exception as e:
-                logger.warning("فشل دمج الترجمة: %s", e)
-
-        filesize = os.path.getsize(video_file) if video_file and os.path.exists(video_file) else 0
-
-        if not embedded and subtitle_file and not subtitle_result:
-            subtitle_result = {"path": subtitle_file, "source": "found", "type": "unknown"}
-
-        await _broadcast(task_id, {
-            "status": "done",
-            "percent": 100,
-            "message": "اكتمل التحميل!",
-            "filename": os.path.basename(video_file) if video_file else "video.mp4",
-            "filesize": human_size(filesize),
-            "filesize_bytes": filesize,
-            "video_file": video_file,
-            "subtitle_file": subtitle_result.get("path") if subtitle_result else None,
-            "subtitle_type": subtitle_result.get("type", "none") if subtitle_result else "none",
-            "subtitle_source": subtitle_result.get("source", None) if subtitle_result else None,
-            "embedded": embedded,
-        })
+        if needs_embed:
+            # ── Sequential: ترجمة أولاً ثم تحميل ثم دمج ──
+            await _process_sequential_embed(task_id, req, output_dir, cancel_event)
+        else:
+            # ── Parallel: ترجمة + تحميل فيديو بالتوازي ──
+            await _process_parallel(task_id, req, output_dir, cancel_event)
 
     except asyncio.CancelledError:
         await _broadcast(task_id, {"status": "cancelled"})
@@ -249,6 +204,287 @@ async def _process_download(task_id: str, req: DownloadRequest):
         cancel_events.pop(task_id, None)
         active_websockets.pop(task_id, None)
 
+
+# ── Subtitle-only Processing ─────────────────────────────────────────
+
+async def _process_subtitle_only(
+    task_id: str, req: DownloadRequest, output_dir: str, cancel_event
+):
+    progress_cb = _progress_cb_factory(task_id)
+
+    await _broadcast(task_id, {
+        "status": "info", "percent": 2,
+        "stage": "audio_prep",
+        "message": "جاري جلب الترجمة...",
+    })
+
+    subtitle_result = None
+    try:
+        subtitle_result = await fetch_subtitles(
+            url=req.url,
+            output_dir=output_dir,
+            task_id=task_id,
+            auto_generate=True,
+            progress_callback=progress_cb,
+        )
+    except Exception as e:
+        logger.warning("فشل جلب الترجمة: %s", e)
+        subtitle_result = {"path": None, "source": None, "type": "none"}
+
+    if cancel_event and cancel_event.is_set():
+        await _broadcast(task_id, {"status": "cancelled"})
+        return
+
+    subtitle_file = find_subtitle_file(task_id)
+    filesize = os.path.getsize(subtitle_file) if subtitle_file and os.path.exists(subtitle_file) else 0
+
+    await _broadcast(task_id, {
+        "status": "done",
+        "percent": 100,
+        "stage": "done",
+        "message": "اكتمل التحميل!",
+        "filename": os.path.basename(subtitle_file) if subtitle_file else "subtitles.srt",
+        "filesize": human_size(filesize),
+        "filesize_bytes": filesize,
+        "video_file": None,
+        "subtitle_file": subtitle_result.get("path") if subtitle_result else None,
+        "subtitle_type": subtitle_result.get("type", "none") if subtitle_result else "none",
+        "subtitle_source": subtitle_result.get("source", None) if subtitle_result else None,
+        "subtitle_only": True,
+    })
+
+
+# ── Sequential Processing (embed subtitles) ──────────────────────────
+
+async def _process_sequential_embed(
+    task_id: str, req: DownloadRequest, output_dir: str, cancel_event
+):
+    loop = asyncio.get_running_loop()
+    progress_cb = _progress_cb_factory(task_id)
+
+    # 1. جلب الترجمة أولاً
+    subtitle_result = None
+    if req.include_subtitles:
+        await _broadcast(task_id, {
+            "status": "info", "percent": 2,
+            "stage": "audio_prep",
+            "message": "جاري فحص الترجمات...",
+        })
+        try:
+            subtitle_result = await fetch_subtitles(
+                url=req.url,
+                output_dir=output_dir,
+                task_id=task_id,
+                auto_generate=req.auto_generate,
+                progress_callback=progress_cb,
+            )
+        except Exception as e:
+            logger.warning("فشل جلب الترجمة: %s", e)
+            subtitle_result = {"path": None, "source": None, "type": "none"}
+
+    if cancel_event and cancel_event.is_set():
+        await _broadcast(task_id, {"status": "cancelled"})
+        return
+
+    # 2. تحميل الفيديو
+    await _broadcast(task_id, {
+        "status": "info", "percent": 50,
+        "stage": "downloading",
+        "message": "جاري تحميل الفيديو...",
+    })
+
+    try:
+        video_path = await download_video(
+            url=req.url,
+            output_dir=output_dir,
+            format_id=req.format_id,
+            progress_callback=progress_cb,
+            cancel_event=cancel_event,
+        )
+    except asyncio.CancelledError:
+        await _broadcast(task_id, {"status": "cancelled"})
+        return
+    except YouTubeError as e:
+        await _broadcast(task_id, {"status": "error", "message": e.message})
+        return
+
+    if cancel_event and cancel_event.is_set():
+        await _broadcast(task_id, {"status": "cancelled"})
+        return
+
+    video_file = video_path
+    subtitle_file = find_subtitle_file(task_id) if subtitle_result and subtitle_result.get("path") else None
+
+    if not video_file:
+        video_file = find_video_file(task_id)
+
+    # 3. دمج الترجمة
+    embedded = False
+    if req.embed_subtitles and subtitle_file:
+        try:
+            await _broadcast(task_id, {
+                "status": "info", "percent": 85,
+                "stage": "merging",
+                "message": "جاري دمج الترجمة في الفيديو...",
+            })
+            video_file = await embed_subtitles(
+                video_file, subtitle_file, output_dir,
+                progress_callback=lambda p, s, e: asyncio.run_coroutine_threadsafe(
+                    _broadcast(task_id, {
+                        "status": "embedding",
+                        "percent": 85 + round(p * 0.1, 1),
+                        "stage": "merging",
+                        "message": f"جاري دمج الترجمة... {round(p)}%"
+                    }), loop
+                ),
+                cancel_event=cancel_event,
+            )
+            subtitle_result = None
+            embedded = True
+        except asyncio.CancelledError:
+            await _broadcast(task_id, {"status": "cancelled"})
+            return
+        except Exception as e:
+            logger.warning("فشل دمج الترجمة: %s", e)
+
+    filesize = os.path.getsize(video_file) if video_file and os.path.exists(video_file) else 0
+
+    if not embedded and subtitle_file and not subtitle_result:
+        subtitle_result = {"path": subtitle_file, "source": "found", "type": "unknown"}
+
+    await _broadcast(task_id, {
+        "status": "done",
+        "percent": 100,
+        "stage": "done",
+        "message": "اكتمل التحميل!",
+        "filename": os.path.basename(video_file) if video_file else "video.mp4",
+        "filesize": human_size(filesize),
+        "filesize_bytes": filesize,
+        "video_file": video_file,
+        "subtitle_file": subtitle_result.get("path") if subtitle_result else None,
+        "subtitle_type": subtitle_result.get("type", "none") if subtitle_result else "none",
+        "subtitle_source": subtitle_result.get("source", None) if subtitle_result else None,
+        "embedded": embedded,
+    })
+
+
+# ── Parallel Processing (non-embed) ──────────────────────────────────
+
+async def _process_parallel(
+    task_id: str, req: DownloadRequest, output_dir: str, cancel_event
+):
+    """
+    تشغيل الترجمة وتحميل الفيديو بالتوازي.
+    الترجمة تحتل 60% من التقدم الإجمالي، وتحميل الفيديو 40%.
+    """
+    tracker = CombinedProgressTracker(task_id)
+
+    subtitle_result = None
+    video_path = None
+    errors = []
+
+    # بدء التقدم فوراً
+    await _broadcast(task_id, {
+        "status": "info", "percent": 1,
+        "stage": "starting",
+        "message": "جاري البدء بالتحميل والترجمة بالتوازي...",
+    })
+
+    async def _run_subtitle():
+        nonlocal subtitle_result
+        if not req.include_subtitles:
+            await tracker.update_subtitle(100)
+            return
+        try:
+            sub_cb = _subtitle_progress_cb(tracker)
+            subtitle_result = await fetch_subtitles(
+                url=req.url,
+                output_dir=output_dir,
+                task_id=task_id,
+                auto_generate=req.auto_generate,
+                progress_callback=sub_cb,
+            )
+            await tracker.update_subtitle(100)
+        except Exception as e:
+            logger.warning("فشل جلب الترجمة (متوازي): %s", e)
+            subtitle_result = {"path": None, "source": None, "type": "none"}
+            await tracker.update_subtitle(100)
+            errors.append(("subtitle", str(e)))
+
+    async def _run_video():
+        nonlocal video_path
+        try:
+            vid_cb = _video_progress_cb(tracker)
+            video_path = await download_video(
+                url=req.url,
+                output_dir=output_dir,
+                format_id=req.format_id,
+                progress_callback=vid_cb,
+                cancel_event=cancel_event,
+            )
+            await tracker.update_video(100)
+        except asyncio.CancelledError:
+            raise
+        except YouTubeError as e:
+            errors.append(("video", e.message))
+            await tracker.update_video(100)
+        except Exception as e:
+            errors.append(("video", str(e)))
+            await tracker.update_video(100)
+
+    # تشغيل المهام بالتوازي
+    subtitle_task = asyncio.create_task(_run_subtitle())
+    video_task = asyncio.create_task(_run_video())
+
+    await asyncio.gather(subtitle_task, video_task, return_exceptions=True)
+
+    if cancel_event and cancel_event.is_set():
+        await _broadcast(task_id, {"status": "cancelled"})
+        return
+
+    # جمع النتائج
+    video_file = video_path
+    subtitle_file = find_subtitle_file(task_id) if subtitle_result and subtitle_result.get("path") else None
+
+    if not video_file:
+        video_file = find_video_file(task_id)
+    if not video_file:
+        candidates = [
+            os.path.join(output_dir, f)
+            for f in os.listdir(output_dir)
+            if os.path.isfile(os.path.join(output_dir, f))
+        ]
+        if candidates:
+            video_file = max(candidates, key=os.path.getsize)
+
+    # التحقق من أخطاء الفيديو
+    video_error = next((e for e in errors if e[0] == "video"), None)
+    if video_error and not video_file:
+        await _broadcast(task_id, {"status": "error", "message": video_error[1]})
+        return
+
+    filesize = os.path.getsize(video_file) if video_file and os.path.exists(video_file) else 0
+
+    if subtitle_file and not subtitle_result:
+        subtitle_result = {"path": subtitle_file, "source": "found", "type": "unknown"}
+
+    await _broadcast(task_id, {
+        "status": "done",
+        "percent": 100,
+        "stage": "done",
+        "message": "اكتمل التحميل!",
+        "filename": os.path.basename(video_file) if video_file else "video.mp4",
+        "filesize": human_size(filesize),
+        "filesize_bytes": filesize,
+        "video_file": video_file,
+        "subtitle_file": subtitle_result.get("path") if subtitle_result else None,
+        "subtitle_type": subtitle_result.get("type", "none") if subtitle_result else "none",
+        "subtitle_source": subtitle_result.get("source", None) if subtitle_result else None,
+        "embedded": False,
+    })
+
+
+# ── File Download Route ──────────────────────────────────────────────
 
 @router.get("/file/{task_id}")
 async def download_file(task_id: str, file_type: str = Query("video", description="video أو subtitle")):
@@ -272,6 +508,8 @@ async def download_file(task_id: str, file_type: str = Query("video", descriptio
     )
 
 
+# ── Cancel Route ─────────────────────────────────────────────────────
+
 @router.post("/cancel/{task_id}")
 async def cancel_download(task_id: str):
     if task_id not in active_tasks and task_id not in cancel_events:
@@ -280,6 +518,8 @@ async def cancel_download(task_id: str):
     cleanup_task(task_id)
     return {"status": "cancelled"}
 
+
+# ── WebSocket for Progress ───────────────────────────────────────────
 
 @router.websocket("/ws/{task_id}")
 async def websocket_progress(websocket: WebSocket, task_id: str):
