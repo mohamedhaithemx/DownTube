@@ -44,7 +44,9 @@ def _ydl_subtitle_opts():
 
 async def _try_ytdl_subtitles(url: str, output_dir: str) -> str | None:
     def _sync():
-        with yt_dlp.YoutubeDL(_ydl_subtitle_opts()) as ydl:
+        opts = _ydl_subtitle_opts()
+        opts["outtmpl"] = os.path.join(output_dir, "%(title)s.%(ext)s")
+        with yt_dlp.YoutubeDL(opts) as ydl:
             try:
                 ydl.extract_info(url, download=True)
             except Exception as e:

@@ -58,6 +58,20 @@ def _has_arabic(text: str) -> bool:
     return False
 
 
+def _get_audio_mime(filepath: str) -> str:
+    ext = os.path.splitext(filepath)[1].lower()
+    return {
+        ".mp3": "audio/mpeg",
+        ".ogg": "audio/ogg",
+        ".wav": "audio/wav",
+        ".webm": "audio/webm",
+        ".m4a": "audio/mp4",
+        ".aac": "audio/aac",
+        ".flac": "audio/flac",
+        ".opus": "audio/ogg",
+    }.get(ext, "audio/mpeg")
+
+
 def _get_duration(filepath: str) -> float:
     cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", filepath]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -91,9 +105,9 @@ def initialize_whisper_model():
 
 async def preprocess_audio(input_path: str) -> str:
     """
-    تحويل الصوت إلى 16kHz mono 32kbps mp3.
+    تحويل الصوت إلى 16kHz mono 64kbps mp3.
     Whisper يحتاج فقط 16kHz mono — الباقي هدر.
-    هذا يقلل حجم الملف من ~165MB (ساعتين 192kbps) إلى ~14MB.
+    64kbps يضمن جودة كافية لـ Groq Whisper API مقارنة بـ 32kbps.
     """
     output_path = str(Path(input_path).with_suffix(".preprocessed.mp3"))
 
@@ -101,7 +115,7 @@ async def preprocess_audio(input_path: str) -> str:
         "ffmpeg", "-y", "-i", input_path,
         "-ar", "16000",       # 16kHz sample rate
         "-ac", "1",           # mono
-        "-b:a", "32k",        # 32kbps bitrate
+        "-b:a", "64k",        # 64kbps bitrate (كان 32k — ضعيف جداً لـ Groq)
         "-map_metadata", "-1",
         output_path,
     ]
@@ -259,7 +273,7 @@ async def _extract_chunk(
             "-t", str(duration),
             "-ar", "16000",
             "-ac", "1",
-            "-b:a", "32k",
+            "-b:a", "64k",
             output_path,
         ]
         result2 = subprocess.run(cmd_reencode, capture_output=True, text=True, timeout=300)
@@ -289,8 +303,9 @@ async def _transcribe_chunk_groq(
 
     def _call():
         with open(chunk_path, "rb") as f:
+            mime = _get_audio_mime(chunk_path)
             transcription = client.audio.transcriptions.create(
-                file=(os.path.basename(chunk_path), f, "audio/mp3"),
+                file=(os.path.basename(chunk_path), f, mime),
                 model=GROQ_WHISPER_MODEL,
                 response_format="verbose_json",
                 temperature=0,
@@ -304,27 +319,31 @@ async def _transcribe_chunk_groq(
     segments = []
     detected_lang = getattr(transcription, "language", "unknown")
 
-    if hasattr(transcription, "segments") and transcription.segments:
-        for seg in transcription.segments:
-            start = getattr(seg, "start", 0) + offset
-            end = getattr(seg, "end", 0) + offset
-            text = getattr(seg, "text", "").strip()
+    segs_raw = transcription.segments if hasattr(transcription, "segments") else None
+    if segs_raw:
+        for seg in segs_raw:
+            if isinstance(seg, dict):
+                text = (seg.get("text") or "").strip()
+                start = seg.get("start", 0) + offset
+                end = seg.get("end", 0) + offset
+            else:
+                text = (getattr(seg, "text", None) or "").strip()
+                start = getattr(seg, "start", 0) + offset
+                end = getattr(seg, "end", 0) + offset
             if text:
-                segments.append({
-                    "start": start,
-                    "end": end,
-                    "text": text,
-                })
+                segments.append({"start": start, "end": end, "text": text})
     else:
         # Fallback: شريحة واحدة من النص الكامل
-        full_text = getattr(transcription, "text", "").strip()
-        if full_text:
+        full_text = ""
+        duration = 0
+        if isinstance(transcription, dict):
+            full_text = (transcription.get("text") or "").strip()
+            duration = transcription.get("duration", 0)
+        else:
+            full_text = (getattr(transcription, "text", None) or "").strip()
             duration = getattr(transcription, "duration", 0)
-            segments.append({
-                "start": offset,
-                "end": offset + duration,
-                "text": full_text,
-            })
+        if full_text:
+            segments.append({"start": offset, "end": offset + duration, "text": full_text})
 
     return segments, detected_lang
 

@@ -1,11 +1,12 @@
 import os
+import asyncio
 import sys
 import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -95,7 +96,8 @@ if FRONTEND_DIR.exists():
 async def root():
     if INDEX_HTML.exists():
         content = INDEX_HTML.read_text(encoding="utf-8")
-        return HTMLResponse(content=content)
+        return Response(content=content, media_type="text/html; charset=utf-8",
+                        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"})
     return HTMLResponse(content="<h1>DownTube — ZET Dev</h1><p>جاري التحميل...</p>")
 
 

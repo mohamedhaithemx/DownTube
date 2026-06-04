@@ -36,6 +36,11 @@ class App {
 
     document.getElementById('include-subtitles').addEventListener('change', (e) => {
       const opts = document.getElementById('subtitle-options');
+      const mode = document.querySelector('input[name="embed-mode"]:checked')?.value || 'separate';
+      if (mode === 'video-only') {
+        opts.classList.add('card-hidden');
+        return;
+      }
       opts.classList.toggle('card-hidden', !e.target.checked);
     });
 
@@ -67,12 +72,20 @@ class App {
   _onEmbedModeChange(mode) {
     const qSec = document.getElementById('quality-section');
     const btnText = document.getElementById('download-btn-text');
+    const subOptions = document.getElementById('subtitle-options');
     if (mode === 'subtitle-only') {
       qSec.classList.add('hidden');
       btnText.textContent = 'تحميل الترجمة';
+      subOptions.classList.remove('card-hidden');
+    } else if (mode === 'video-only') {
+      qSec.classList.remove('hidden');
+      btnText.textContent = 'تحميل الفيديو';
+      subOptions.classList.add('card-hidden');
     } else {
       qSec.classList.remove('hidden');
       btnText.textContent = 'تحميل الآن';
+      const subChecked = document.getElementById('include-subtitles').checked;
+      subOptions.classList.toggle('card-hidden', !subChecked);
     }
   }
 
@@ -324,13 +337,11 @@ class Downloader {
 
     const qualityEl = document.querySelector('input[name="quality"]:checked');
     const formatId = qualityEl ? qualityEl.value : 'best';
-    const includeSubs = document.getElementById('include-subtitles').checked;
     const embedMode = document.querySelector('input[name="embed-mode"]:checked')?.value || 'separate';
-    const embedSubs = embedMode === 'embed';
+    const videoOnly = embedMode === 'video-only';
     const subtitleOnly = embedMode === 'subtitle-only';
+    const includeSubs = videoOnly ? false : document.getElementById('include-subtitles').checked;
     const actualIncludeSubs = includeSubs || subtitleOnly;
-
-    this.taskId = crypto.randomUUID ? crypto.randomUUID() : self.crypto.randomUUID();
 
     this.app.hideError();
     this.app.showSection('progress');
@@ -344,6 +355,10 @@ class Downloader {
     const timeout = setTimeout(() => this.controller.abort(), subtitleOnly ? 120000 : 300000);
 
     try {
+      this.taskId = (crypto.randomUUID && crypto.randomUUID()) ||
+                    (self.crypto.randomUUID && self.crypto.randomUUID()) ||
+                    Date.now().toString(36) + Math.random().toString(36).slice(2);
+
       const resp = await fetch('/api/v1/download/video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -352,7 +367,7 @@ class Downloader {
           format_id: formatId,
           include_subtitles: actualIncludeSubs,
           auto_generate: true,
-          embed_subtitles: embedSubs,
+          embed_subtitles: false,
           subtitle_only: subtitleOnly,
           task_id: this.taskId,
         }),
@@ -373,7 +388,6 @@ class Downloader {
       } else {
         this.app.showError(err.message || 'حدث خطأ أثناء بدء التحميل');
       }
-      this.app.showSection('input');
     } finally {
       clearTimeout(timeout);
       const dlBtn = document.getElementById('download-btn');
@@ -398,19 +412,7 @@ class Downloader {
   }
 
   restart() {
-    const url = document.getElementById('url-input').value.trim();
-    const savedData = this.app.videoInfo.data;
-    const savedCache = this.app.videoInfo.cache;
-    this.app.resetUI();
-    if (!url) return;
-    document.getElementById('url-input').value = url;
-    this.app.videoInfo.cache = savedCache;
-    if (savedData) {
-      this.app.videoInfo.data = savedData;
-      this.app.videoInfo.display(savedData);
-    } else {
-      this.app.videoInfo.fetch();
-    }
+    window.location.reload();
   }
 }
 
@@ -566,7 +568,7 @@ class UIManager {
       badge.className = 'result-badge subtitle-only';
       badge.style.display = '';
       if (data.subtitle_file) {
-        dlSub.onclick = () => this._downloadFile(data.subtitle_file);
+        dlSub.onclick = () => this._downloadFile(data.subtitle_file, data.task_id);
         dlSub.style.display = '';
         dlSub.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> تحميل الترجمة';
       }
@@ -576,7 +578,7 @@ class UIManager {
       badge.className = 'result-badge embedded';
       badge.style.display = '';
       if (data.video_file) {
-        dlVideo.onclick = () => this._downloadFile(data.video_file);
+        dlVideo.onclick = () => this._downloadFile(data.video_file, data.task_id);
         dlVideo.style.display = '';
         dlVideo.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> تحميل الفيديو (مع الترجمة)';
       }
@@ -584,11 +586,11 @@ class UIManager {
       document.getElementById('result-icon').textContent = '✅';
       badge.style.display = 'none';
       if (data.video_file) {
-        dlVideo.onclick = () => this._downloadFile(data.video_file);
+        dlVideo.onclick = () => this._downloadFile(data.video_file, data.task_id);
         dlVideo.style.display = '';
       }
       if (data.subtitle_file) {
-        dlSub.onclick = () => this._downloadFile(data.subtitle_file);
+        dlSub.onclick = () => this._downloadFile(data.subtitle_file, data.task_id);
         dlSub.style.display = '';
         const subType = data.subtitle_type === 'official' ? 'رسمية'
           : data.subtitle_type === 'generated' ? 'AI' : '';
@@ -599,13 +601,14 @@ class UIManager {
     this.app.showSection('result');
   }
 
-  _downloadFile(filepath) {
+  _downloadFile(filepath, taskId) {
     if (!filepath) return;
     const filename = filepath.split('/').pop() || 'download';
     const isSubtitle = filepath.endsWith('.srt') || filepath.endsWith('.vtt');
+    const tid = taskId || this.app.downloader.taskId;
+    if (!tid) return;
     const a = document.createElement('a');
-    // إرسال اسم الملف المحدد لضمان تحميل الملف الصحيح (خاصة المدمج)
-    a.href = `/api/v1/download/file/${this.app.downloader.taskId}?file_type=${isSubtitle ? 'subtitle' : 'video'}&filename=${encodeURIComponent(filename)}`;
+    a.href = `/api/v1/download/file/${tid}?file_type=${isSubtitle ? 'subtitle' : 'video'}&filename=${encodeURIComponent(filename)}`;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
