@@ -15,6 +15,7 @@ from app.utils.file_manager import (
     generate_task_id,
     find_video_file,
     find_subtitle_file,
+    list_files,
     human_size,
     cleanup_task,
 )
@@ -444,7 +445,16 @@ async def _process_parallel(
 
     # جمع النتائج
     video_file = video_path
-    subtitle_file = find_subtitle_file(task_id) if subtitle_result and subtitle_result.get("path") else None
+    # مسار الترجمة: استخدم subtitle_result مباشرة أو ابحث عن الملف
+    subtitle_path = None
+    if subtitle_result and subtitle_result.get("path"):
+        subtitle_path = subtitle_result.get("path")
+    elif subtitle_result:
+        # ابحث عن ملف الترجمة في مجلد المهمة
+        found = find_subtitle_file(task_id)
+        if found:
+            subtitle_path = found
+            subtitle_result = {"path": found, "source": "found", "type": "unknown"}
 
     if not video_file:
         video_file = find_video_file(task_id)
@@ -465,8 +475,8 @@ async def _process_parallel(
 
     filesize = os.path.getsize(video_file) if video_file and os.path.exists(video_file) else 0
 
-    if subtitle_file and not subtitle_result:
-        subtitle_result = {"path": subtitle_file, "source": "found", "type": "unknown"}
+    # التأكد من إرسال مسار الترجمة الصحيح
+    final_subtitle_path = subtitle_path or (subtitle_result.get("path") if subtitle_result else None)
 
     await _broadcast(task_id, {
         "status": "done",
@@ -477,7 +487,7 @@ async def _process_parallel(
         "filesize": human_size(filesize),
         "filesize_bytes": filesize,
         "video_file": video_file,
-        "subtitle_file": subtitle_result.get("path") if subtitle_result else None,
+        "subtitle_file": final_subtitle_path,
         "subtitle_type": subtitle_result.get("type", "none") if subtitle_result else "none",
         "subtitle_source": subtitle_result.get("source", None) if subtitle_result else None,
         "embedded": False,
@@ -487,12 +497,29 @@ async def _process_parallel(
 # ── File Download Route ──────────────────────────────────────────────
 
 @router.get("/file/{task_id}")
-async def download_file(task_id: str, file_type: str = Query("video", description="video أو subtitle")):
+async def download_file(
+    task_id: str,
+    file_type: str = Query("video", description="video أو subtitle"),
+    filename: str = Query(None, description="اسم ملف محدد للتحميل"),
+):
     output_dir = str(get_task_dir(task_id))
+
+    # إذا تم تحديد اسم ملف، ابحث عنه مباشرة
+    if filename:
+        direct_path = os.path.join(output_dir, filename)
+        if os.path.exists(direct_path) and os.path.isfile(direct_path):
+            return FileResponse(
+                path=direct_path,
+                filename=filename,
+                media_type="application/octet-stream",
+            )
+
+    # Fallback: بحث بنوع الملف
     if file_type == "subtitle":
         filepath = find_subtitle_file(task_id)
     else:
-        filepath = find_video_file(task_id)
+        # للفيديو: فضّل الملف المدمج (_embedded) إن وجد
+        filepath = _find_embedded_video(task_id) or find_video_file(task_id)
 
     if not filepath or not os.path.exists(filepath):
         candidates = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if os.path.isfile(os.path.join(output_dir, f))]
@@ -506,6 +533,15 @@ async def download_file(task_id: str, file_type: str = Query("video", descriptio
         filename=os.path.basename(filepath),
         media_type="application/octet-stream",
     )
+
+
+def _find_embedded_video(task_id: str) -> str | None:
+    """إيجاد ملف الفيديو المدمج (_embedded) إن وجد"""
+    for f in list_files(task_id):
+        name = f.name.lower()
+        if "_embedded" in name and f.suffix.lower() in {".mp4", ".mkv", ".webm", ".avi", ".mov"}:
+            return str(f)
+    return None
 
 
 # ── Cancel Route ─────────────────────────────────────────────────────
