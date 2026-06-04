@@ -1,10 +1,13 @@
 import os
+import json
+import subprocess
 import logging
 import asyncio
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-from groq import Groq
+from faster_whisper import WhisperModel
 
 from app.utils.validators import ERROR_MESSAGES
 from app.utils.srt_converter import groq_json_to_srt, merge_short_segments, translate_segments_to_arabic
@@ -12,10 +15,13 @@ from app.utils.srt_converter import groq_json_to_srt, merge_short_segments, tran
 logger = logging.getLogger(__name__)
 
 _executor = ThreadPoolExecutor(max_workers=1)
-_parallel_executor = ThreadPoolExecutor(max_workers=3)
 
-GROQ_MODEL = "whisper-large-v3"
-MAX_FILE_SIZE = 25 * 1024 * 1024
+_model = None
+_model_lock = threading.Lock()
+
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small")
+WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
+WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 
 ARABIC_RANGES = [
     (0x0600, 0x06FF),
@@ -32,11 +38,22 @@ class GroqServiceError(Exception):
         super().__init__(self.message)
 
 
-def _get_client() -> Groq:
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key or api_key == "your_groq_api_key_here":
-        raise GroqServiceError(ERROR_MESSAGES["groq_no_key"])
-    return Groq(api_key=api_key)
+def _get_model() -> WhisperModel:
+    global _model
+    if _model is None:
+        with _model_lock:
+            if _model is None:
+                logger.info(
+                    "تحميل نموذج faster-whisper %s على %s (%s)",
+                    WHISPER_MODEL_SIZE, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE,
+                )
+                _model = WhisperModel(
+                    WHISPER_MODEL_SIZE,
+                    device=WHISPER_DEVICE,
+                    compute_type=WHISPER_COMPUTE_TYPE,
+                )
+                logger.info("تم تحميل النموذج بنجاح")
+    return _model
 
 
 def _has_arabic(text: str) -> bool:
@@ -48,109 +65,44 @@ def _has_arabic(text: str) -> bool:
     return False
 
 
-def _transcribe_file(client: Groq, filepath: str, start_time: float = 0) -> list[dict]:
-    with open(filepath, "rb") as f:
-        result = client.audio.transcriptions.create(
-            file=(os.path.basename(filepath), f),
-            model=GROQ_MODEL,
-            response_format="verbose_json",
-            temperature=0,
-        )
-    segments = []
-    for seg in getattr(result, "segments", []):
-        segments.append({
-            "start": seg.get("start", 0) + start_time,
-            "end": seg.get("end", 0) + start_time,
-            "text": seg.get("text", ""),
-        })
-    return segments
-
-
-def _transcribe_parallel(segments_with_times: list[tuple[str, float]], progress_callback) -> list[dict]:
-    total = len(segments_with_times)
-    if total == 0:
-        return []
-    if total == 1:
-        client = _get_client()
-        segs = _transcribe_file(client, segments_with_times[0][0], segments_with_times[0][1])
-        if progress_callback:
-            progress_callback(80, 0, 0)
-        return segs
-
-    results = [None] * total
-
-    def transcribe_one(idx: int, path: str, start: float) -> list[dict]:
-        c = _get_client()
-        return _transcribe_file(c, path, start)
-
-    futures = {}
-    with ThreadPoolExecutor(max_workers=min(3, total)) as pool:
-        for i, (path, start) in enumerate(segments_with_times):
-            futures[pool.submit(transcribe_one, i, path, start)] = i
-
-        for f in as_completed(futures):
-            idx = futures[f]
-            try:
-                results[idx] = f.result()
-            except Exception as e:
-                logger.error("فشل transcribe للجزء %d: %s", idx, e)
-                raise
-            if progress_callback:
-                pct = 10 + ((idx + 1) / total) * 70
-                progress_callback(pct, 0, 0)
-
-    merged = []
-    for seg_list in results:
-        if seg_list:
-            merged.extend(seg_list)
-    return merged
-
-
-def _split_audio(audio_path: str, output_dir: str, max_size: int = MAX_FILE_SIZE) -> list[str]:
-    import subprocess
-    size = os.path.getsize(audio_path)
-    if size <= max_size:
-        return [audio_path]
-
-    duration_cmd = [
-        "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "csv=p=0",
-        audio_path,
-    ]
-    result = subprocess.run(duration_cmd, capture_output=True, text=True)
-    try:
-        total_duration = float(result.stdout.strip())
-    except (ValueError, TypeError):
-        raise GroqServiceError("تعذر حساب مدة الملف الصوتي")
-
-    ratio = max_size / size
-    segment_duration = total_duration * ratio * 0.95
-
-    segment_pattern = os.path.join(output_dir, "segment_%03d.mp3")
-    split_cmd = [
-        "ffmpeg", "-y", "-v", "quiet",
-        "-i", audio_path,
-        "-f", "segment",
-        "-segment_time", str(segment_duration),
-        "-c", "copy",
-        segment_pattern,
-    ]
-    subprocess.run(split_cmd, check=True, capture_output=True)
-
-    segments = sorted([
-        os.path.join(output_dir, f)
-        for f in os.listdir(output_dir)
-        if f.startswith("segment_") and f.endswith(".mp3")
-    ])
-    return segments
-
-
 def _get_duration(filepath: str) -> float:
-    import subprocess, json
     cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", filepath]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     return float(json.loads(r.stdout)["format"]["duration"])
+
+
+def _transcribe_local(
+    audio_path: str,
+    total_duration: float,
+    progress_callback: callable = None,
+) -> tuple[list[dict], str]:
+    model = _get_model()
+    segments_gen, info = model.transcribe(
+        audio_path,
+        beam_size=5,
+        vad_filter=True,
+        language=None,
+    )
+
+    detected_lang = info.language
+    lang_prob = info.language_probability
+    logger.info("اللغة المكتشفة: %s (احتمال: %.1f%%)", detected_lang, lang_prob * 100)
+
+    results = []
+    last_pct = -1
+    for seg in segments_gen:
+        results.append({
+            "start": seg.start,
+            "end": seg.end,
+            "text": seg.text.strip(),
+        })
+        if progress_callback and total_duration > 0:
+            pct = min(95, (seg.end / total_duration) * 95)
+            if int(pct) != last_pct:
+                last_pct = int(pct)
+                progress_callback(pct, 0, 0)
+
+    return results, detected_lang
 
 
 async def generate_subtitles(
@@ -161,53 +113,46 @@ async def generate_subtitles(
     progress_callback: callable = None,
 ) -> str:
     def _sync():
-        client = _get_client()
-
         if progress_callback:
             progress_callback(2, 0, 0)
 
-        segment_paths = _split_audio(audio_path, output_dir)
+        total_duration = _get_duration(audio_path)
+        if total_duration <= 0:
+            raise GroqServiceError("تعذر حساب مدة الملف الصوتي")
 
         if progress_callback:
             progress_callback(5, 0, 0)
 
-        # Compute durations + start times for each segment
-        seg_info = []
-        for seg_path in segment_paths:
-            duration = _get_duration(seg_path)
-            seg_info.append((seg_path, duration))
+        segments, detected_lang = _transcribe_local(
+            audio_path, total_duration, progress_callback,
+        )
 
-        seg_start_time = 0.0
-        segments_with_times = []
-        for seg_path, duration in seg_info:
-            segments_with_times.append((seg_path, seg_start_time))
-            seg_start_time += duration
-
-        # Parallel transcription
-        all_segments = _transcribe_parallel(segments_with_times, progress_callback)
-
-        if progress_callback:
-            progress_callback(82, 0, 0)
-
-        all_segments = merge_short_segments(all_segments)
-
-        # Check if translation is needed
-        needs_translation = not any(_has_arabic(seg.get("text", "")) for seg in all_segments)
-
-        if needs_translation:
-            if progress_callback:
-                progress_callback(85, 0, 0)
-            all_segments = translate_segments_to_arabic(all_segments, video_title=title, client=client)
-            all_segments = merge_short_segments(all_segments)
-        else:
-            logger.info("النص عربي، تخطي الترجمة عبر Llama")
+        if not segments:
+            raise GroqServiceError("لم يتم التعرف على أي نص")
 
         if progress_callback:
             progress_callback(95, 0, 0)
 
-        srt_content = groq_json_to_srt(all_segments)
+        segments = merge_short_segments(segments)
+
+        needs_translation = (
+            detected_lang != "ar"
+            and not any(_has_arabic(seg.get("text", "")) for seg in segments)
+        )
+
+        if needs_translation:
+            segments = translate_segments_to_arabic(segments, video_title=title)
+            segments = merge_short_segments(segments)
+        else:
+            logger.info("النص عربي — تخطي الترجمة عبر Llama")
+
+        if progress_callback:
+            progress_callback(98, 0, 0)
+
+        srt_content = groq_json_to_srt(segments)
         if not srt_content.strip():
             raise GroqServiceError("لم يتم التعرف على أي نص من ملف الصوت")
+
         safe_title = "".join(c for c in (title or task_id) if c.isalnum() or c in " ._-").strip() or task_id
         output_path = os.path.join(output_dir, f"{safe_title}.srt")
         with open(output_path, "w", encoding="utf-8") as f:
@@ -224,12 +169,5 @@ async def generate_subtitles(
     except GroqServiceError:
         raise
     except Exception as e:
-        err_msg = str(e).lower()
-        if "rate_limit" in err_msg or "rate limit" in err_msg or "429" in str(e):
-            raise GroqServiceError(ERROR_MESSAGES["groq_rate_limit"])
-        if "too large" in err_msg or "413" in str(e):
-            raise GroqServiceError(ERROR_MESSAGES["groq_file_too_large"])
-        if "api key" in err_msg.lower():
-            raise GroqServiceError(ERROR_MESSAGES["groq_no_key"])
-        logger.exception("خطأ في توليد الترجمة عبر Groq")
-        raise GroqServiceError(ERROR_MESSAGES["internal_error"])
+        logger.exception("خطأ في توليد الترجمة عبر faster-whisper")
+        raise GroqServiceError(str(e))
