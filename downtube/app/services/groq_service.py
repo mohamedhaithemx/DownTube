@@ -88,6 +88,13 @@ def _split_audio(audio_path: str, output_dir: str, max_size: int = MAX_FILE_SIZE
     return segments
 
 
+def _get_duration(filepath: str) -> float:
+    import subprocess, json
+    cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", filepath]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    return float(json.loads(r.stdout)["format"]["duration"])
+
+
 async def generate_subtitles(
     audio_path: str,
     output_dir: str,
@@ -99,15 +106,16 @@ async def generate_subtitles(
         client = _get_client()
         segments = _split_audio(audio_path, output_dir)
         all_segments = []
+        seg_start_time = 0.0
         total = len(segments)
         for i, seg_path in enumerate(segments):
-            seg_start_time = 0.0
             if i > 0:
                 from app.utils.file_manager import find_audio_file
                 if os.path.getsize(seg_path) > MAX_FILE_SIZE:
                     raise GroqServiceError("ملف الصوت كبير جداً حتى بعد التقسيم")
             segs = _transcribe_file(client, seg_path, start_time=seg_start_time)
             all_segments.extend(segs)
+            seg_start_time += _get_duration(seg_path)
             if progress_callback:
                 progress_callback(((i + 1) / total) * 100, 0, 0)
             if len(segments) > 1:
