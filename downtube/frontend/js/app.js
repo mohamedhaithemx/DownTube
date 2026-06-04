@@ -27,7 +27,7 @@ class App {
     document.getElementById('cancel-btn').addEventListener('click', () => this.downloader.cancel());
     document.getElementById('restart-btn').addEventListener('click', () => this.downloader.restart());
     document.getElementById('result-restart-btn').addEventListener('click', () => this.downloader.restart());
-    document.getElementById('new-download-btn').addEventListener('click', () => this.resetUI());
+    // زر 'تحميل فيديو جديد' تم حذفه
     document.getElementById('clear-btn').addEventListener('click', () => this._clearVideo());
     document.getElementById('retry-btn').addEventListener('click', () => this.resetUI());
     document.getElementById('url-input').addEventListener('keydown', (e) => {
@@ -468,11 +468,14 @@ class ProgressTracker {
 
     switch (status) {
       case 'info':
-        this.app.ui.setProgress(0, data.message || 'جاري التجهيز...');
+        this.app.ui.setProgress(data.percent || 0, data.message || 'جاري التجهيز...');
         break;
 
+      case 'progress':
       case 'downloading':
       case 'embedding':
+      case 'transcribing':
+      case 'translating':
         this.app.ui.setProgress(data.percent, data.message || 'جاري المعالجة...', data.speed, data.eta);
         break;
 
@@ -598,9 +601,12 @@ class UIManager {
 
   _downloadFile(filepath) {
     if (!filepath) return;
+    const filename = filepath.split('/').pop() || 'download';
+    const isSubtitle = filepath.endsWith('.srt') || filepath.endsWith('.vtt');
     const a = document.createElement('a');
-    a.href = `/api/v1/download/file/${this.app.downloader.taskId}?file_type=${filepath.endsWith('.srt') || filepath.endsWith('.vtt') ? 'subtitle' : 'video'}`;
-    a.download = filepath.split('/').pop() || 'download';
+    // إرسال اسم الملف المحدد لضمان تحميل الملف الصحيح (خاصة المدمج)
+    a.href = `/api/v1/download/file/${this.app.downloader.taskId}?file_type=${isSubtitle ? 'subtitle' : 'video'}&filename=${encodeURIComponent(filename)}`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
