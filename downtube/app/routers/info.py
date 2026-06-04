@@ -25,22 +25,18 @@ async def get_video_info(url: str = Query(..., description="رابط فيديو 
         raise HTTPException(status_code=e.status_code, detail=e.message)
 
     formats = []
-    for f in info.get("formats", []):
-        height = f.get("height") or 0
-        ext = f.get("ext", "")
-        filesize = f.get("filesize") or f.get("filesize_approx") or 0
-        format_note = f.get("format_note", "")
-        if height >= 1080 or (ext == "mp4" and height >= 720):
-            label = f"{height}p"
-            if "HDR" in format_note:
-                label = f"{height}p HDR"
-            formats.append({
-                "format_id": f.get("format_id"),
-                "label": label,
-                "ext": ext,
-                "size": filesize,
-                "note": format_note,
-            })
+    seen_heights = set()
+    for h in (1080, 720, 480, 360):
+        for f in info.get("formats", []):
+            if f.get("height") == h and f.get("ext") == "mp4" and h not in seen_heights:
+                seen_heights.add(h)
+                formats.append({
+                    "format_id": f["format_id"],
+                    "label": f"{h}p",
+                    "ext": "mp4",
+                    "size": f.get("filesize") or f.get("filesize_approx") or 0,
+                })
+                break
 
     audio_formats = []
     for f in info.get("formats", []):
@@ -52,6 +48,7 @@ async def get_video_info(url: str = Query(..., description="رابط فيديو 
                 "ext": f.get("ext", "mp3"),
                 "size": f.get("filesize") or f.get("filesize_approx") or 0,
             })
+            break
 
     subtitle_info = []
     subtitles = info.get("subtitles", {}) or {}

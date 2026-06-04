@@ -222,7 +222,7 @@ async def _process_download(task_id: str, req: DownloadRequest):
 
         filesize = os.path.getsize(video_file) if video_file and os.path.exists(video_file) else 0
 
-        if subtitle_file and not subtitle_result:
+        if not embedded and subtitle_file and not subtitle_result:
             subtitle_result = {"path": subtitle_file, "source": "found", "type": "unknown"}
 
         await _broadcast(task_id, {

@@ -45,6 +45,23 @@ class App {
 
     const initialMode = document.querySelector('input[name="embed-mode"]:checked')?.value || 'separate';
     this._onEmbedModeChange(initialMode);
+
+    // 3D tilt on cards
+    document.querySelectorAll('.card').forEach(card => {
+      card.addEventListener('mousemove', (e) => {
+        const rect = card.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const cx = rect.width / 2;
+        const cy = rect.height / 2;
+        const rx = ((y - cy) / cy) * -6;
+        const ry = ((x - cx) / cx) * 6;
+        card.style.transform = `perspective(800px) rotateX(${rx}deg) rotateY(${ry}deg)`;
+      });
+      card.addEventListener('mouseleave', () => {
+        card.style.transform = '';
+      });
+    });
   }
 
   _onEmbedModeChange(mode) {
@@ -108,7 +125,6 @@ class App {
     document.getElementById('restart-btn').style.display = 'none';
     document.getElementById('result-restart-btn').style.display = 'none';
     document.getElementById('download-btn-text').textContent = 'تحميل الآن';
-    this.videoInfo.cache = new Map();
     this.showSection('input');
   }
 
@@ -383,13 +399,15 @@ class Downloader {
 
   restart() {
     const url = document.getElementById('url-input').value.trim();
+    const savedData = this.app.videoInfo.data;
+    const savedCache = this.app.videoInfo.cache;
     this.app.resetUI();
     if (!url) return;
     document.getElementById('url-input').value = url;
-    // Use cached data if available — instant, no network
-    if (this.app.videoInfo.data) {
-      document.getElementById('quality-selector').innerHTML = '';
-      this.app.videoInfo.display(this.app.videoInfo.data);
+    this.app.videoInfo.cache = savedCache;
+    if (savedData) {
+      this.app.videoInfo.data = savedData;
+      this.app.videoInfo.display(savedData);
     } else {
       this.app.videoInfo.fetch();
     }
@@ -528,48 +546,51 @@ class UIManager {
 
     const filename = data.filename || 'video.mp4';
     const filesize = data.filesize || '';
-    const filesizeBytes = data.filesize_bytes || 0;
-
     const badge = document.getElementById('result-badge');
+    document.getElementById('result-filename').textContent = filename;
+    document.getElementById('result-filesize').textContent = filesize;
+    document.getElementById('result-restart-btn').style.display = '';
+
+    const dlVideo = document.getElementById('download-video-btn');
+    const dlSub = document.getElementById('download-subtitle-btn');
+    const subText = document.getElementById('download-subtitle-text');
+    dlVideo.style.display = 'none';
+    dlSub.style.display = 'none';
+
     if (data.subtitle_only) {
       document.getElementById('result-icon').textContent = '📝';
       badge.textContent = 'ترجمة فقط';
       badge.className = 'result-badge subtitle-only';
       badge.style.display = '';
+      if (data.subtitle_file) {
+        dlSub.onclick = () => this._downloadFile(data.subtitle_file);
+        dlSub.style.display = '';
+        dlSub.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> تحميل الترجمة';
+      }
     } else if (data.embedded) {
       document.getElementById('result-icon').textContent = '🎬';
       badge.textContent = 'الترجمة مدمجة في الفيديو';
       badge.className = 'result-badge embedded';
       badge.style.display = '';
+      if (data.video_file) {
+        dlVideo.onclick = () => this._downloadFile(data.video_file);
+        dlVideo.style.display = '';
+        dlVideo.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> تحميل الفيديو (مع الترجمة)';
+      }
     } else {
       document.getElementById('result-icon').textContent = '✅';
       badge.style.display = 'none';
-    }
-
-    document.getElementById('result-filename').textContent = filename;
-    document.getElementById('result-filesize').textContent = filesize;
-
-    document.getElementById('result-restart-btn').style.display = '';
-
-    const dlVideo = document.getElementById('download-video-btn');
-    if (data.video_file && !data.subtitle_only) {
-      dlVideo.onclick = () => this._downloadFile(data.video_file);
-      dlVideo.style.display = '';
-    } else {
-      dlVideo.style.display = 'none';
-    }
-
-    const dlSub = document.getElementById('download-subtitle-btn');
-    const subText = document.getElementById('download-subtitle-text');
-    if (data.subtitle_file) {
-      dlSub.onclick = () => this._downloadFile(data.subtitle_file);
-      dlSub.style.display = '';
-      const subType = data.subtitle_type === 'official' ? 'رسمية'
-        : data.subtitle_type === 'generated' ? 'AI'
-        : '';
-      subText.textContent = subType ? `تحميل الترجمة (${subType})` : 'تحميل الترجمة';
-    } else {
-      dlSub.style.display = 'none';
+      if (data.video_file) {
+        dlVideo.onclick = () => this._downloadFile(data.video_file);
+        dlVideo.style.display = '';
+      }
+      if (data.subtitle_file) {
+        dlSub.onclick = () => this._downloadFile(data.subtitle_file);
+        dlSub.style.display = '';
+        const subType = data.subtitle_type === 'official' ? 'رسمية'
+          : data.subtitle_type === 'generated' ? 'AI' : '';
+        subText.textContent = subType ? `تحميل الترجمة (${subType})` : 'تحميل الترجمة';
+      }
     }
 
     this.app.showSection('result');

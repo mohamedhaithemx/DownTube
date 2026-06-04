@@ -53,7 +53,7 @@ def translate_segments_to_arabic(segments: list[dict], video_title: str = "", cl
     batch_size = 30
     translated_segments = list(segments)
 
-    batch_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+    batch_models = ["llama-3.2-3b-preview"]
 
     for batch_start in range(0, len(text_parts), batch_size):
         batch_texts = text_parts[batch_start:batch_start + batch_size]
@@ -71,33 +71,27 @@ def translate_segments_to_arabic(segments: list[dict], video_title: str = "", cl
             f"النص:\n{numbered}"
         )
 
-        translated_ok = False
-        for model in batch_models:
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": "أنت مترجم محترف للعربية. ترجم النصوص ترجمة طبيعية سلسة."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.3,
-                    max_tokens=4096,
-                )
-                translated = response.choices[0].message.content.strip()
-                translated_lines = _parse_numbered_response(translated, len(batch_texts))
-                if len(translated_lines) != len(batch_texts):
-                    logger.warning("عدد الأسطر المترجمة (%d) لا يساوي المدخل (%d)، استخدام النص الأصلي", len(translated_lines), len(batch_texts))
-                    continue
+        try:
+            response = client.chat.completions.create(
+                model=batch_models[0],
+                messages=[
+                    {"role": "system", "content": "أنت مترجم محترف للعربية. ترجم النصوص ترجمة طبيعية سلسة."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,
+                max_tokens=2048,
+            )
+            translated = response.choices[0].message.content.strip()
+            translated_lines = _parse_numbered_response(translated, len(batch_texts))
+            if len(translated_lines) == len(batch_texts):
                 for i, tline in enumerate(translated_lines):
                     idx = batch_start + i
                     if idx < len(translated_segments):
                         translated_segments[idx]["text"] = tline
-                translated_ok = True
-                if model != batch_models[0]:
-                    logger.info("تمت الترجمة باستخدام الموديل البديل: %s", model)
-                break
-            except Exception as e:
-                logger.warning("فشلت الترجمة بالموديل %s: %s", model, e)
+            else:
+                logger.warning("عدد الأسطر المترجمة (%d) لا يساوي المدخل (%d)", len(translated_lines), len(batch_texts))
+        except Exception as e:
+            logger.warning("فشلت الترجمة بالموديل %s: %s", batch_models[0], e)
 
     return translated_segments
 
