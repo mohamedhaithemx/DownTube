@@ -107,7 +107,7 @@ async def download_video(
         if format_id == "audio-only":
             fmt = "bestaudio/best"
         elif not any(c in format_id for c in "+/|,"):
-            fmt = f"{format_id}+bestaudio[ext=m4a]/bestaudio/best[ext=mp4]/best"
+            fmt = f"{format_id}+bestaudio[ext=m4a][acodec^=mp4a]/best[ext=mp4]/best"
         else:
             fmt = format_id
         postprocessors = []

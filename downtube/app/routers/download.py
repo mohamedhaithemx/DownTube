@@ -29,7 +29,7 @@ cancel_events: dict[str, asyncio.Event] = {}
 
 class DownloadRequest(BaseModel):
     url: str
-    format_id: str = "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[ext=mp4][vcodec^=avc1]+bestaudio/best[ext=mp4]/best"
+    format_id: str = "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a][acodec^=mp4a]/best[ext=mp4]/best"
     include_subtitles: bool = True
     auto_generate: bool = True
     embed_subtitles: bool = False
