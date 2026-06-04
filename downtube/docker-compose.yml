@@ -1,0 +1,11 @@
+version: '3.8'
+services:
+  downtube:
+    build: .
+    ports:
+      - "${PORT:-8080}:8000"
+    volumes:
+      - ./downloads:/tmp/downtube
+    env_file:
+      - .env
+    restart: unless-stopped

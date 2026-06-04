@@ -3,6 +3,7 @@ __pycache__/
 *.so
 *.egg-info/
 venv/
+.venv/
 .env
 *.mp4
 *.mkv
@@ -12,3 +13,6 @@ venv/
 *.part
 ffmpeg/
 .pytest_cache/
+downloads/
+Screenshot_*.jpg
+node_modules/
