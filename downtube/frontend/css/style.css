@@ -664,6 +664,18 @@ body {
   display: none !important;
 }
 
+.duration-warning {
+  background: rgba(255, 152, 0, 0.15);
+  border: 1px solid rgba(255, 152, 0, 0.4);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin: 12px 0;
+  font-size: 13px;
+  color: #ffb74d;
+  text-align: center;
+  line-height: 1.5;
+}
+
 .quality-group.hidden {
   display: none !important;
 }

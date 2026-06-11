@@ -14,7 +14,7 @@ YOUTUBE_URL_REGEX = re.compile(
     r"(youtube\.com|youtu\.be)"
     r"(/(watch\?v=|shorts/|embed/)|/)?"
     r"[\w-]{11}"
-    r"([&\w=%-]*)?$"
+    r"([&\w=%-?]*)?$"
 )
 
 SUPPORTED_LANGS = {"ar": "العربية", "en": "English"}
@@ -55,6 +55,10 @@ ERROR_MESSAGES: dict[str, str] = {
     "groq_no_key": "يرجى إضافة GROQ_API_KEY في ملف .env للحصول على الترجمة التلقائية.",
     "groq_rate_limit": "تم تجاوز حد الاستخدام المجاني من Groq، يرجى المحاولة لاحقاً.",
     "groq_file_too_large": "ملف الصوت كبير جداً، جاري التقسيم والمعالجة...",
+    "duration_exceeded": "مدة الفيديو تتجاوز {max_hours} ساعات. يرجى اختيار فيديو أقصر.",
+    "basic_timeout": "تعذر جلب المعلومات الأساسية للفيديو. حاول مرة أخرى.",
+    "formats_timeout": "تعذر جلب خيارات الجودة. سيتم استخدام الجودة الافتراضية.",
+    "info_timeout": "انتهت مهلة جلب معلومات الفيديو. الفيديو قد يكون طويلاً جداً أو أن الخادم مشغول.",
     "ffmpeg_error": "خطأ في معالجة الفيديو.",
     "internal_error": "حدث خطأ داخلي. يرجى المحاولة مرة أخرى.",
     "download_failed": "فشل تحميل الفيديو.",

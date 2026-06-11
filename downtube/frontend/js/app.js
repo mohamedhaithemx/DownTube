@@ -87,12 +87,34 @@ class App {
       const subChecked = document.getElementById('include-subtitles').checked;
       subOptions.classList.toggle('card-hidden', !subChecked);
     }
+    if (this.videoInfo && this.videoInfo.data) {
+      this._updateDurationWarning(this.videoInfo.data);
+    }
+  }
+
+  _updateDurationWarning(data) {
+    if (!data) return;
+    const durWarn = document.getElementById('duration-warning');
+    const curMode = document.querySelector('input[name="embed-mode"]:checked')?.value || 'separate';
+    const isSingleMode = curMode === 'video-only' || curMode === 'subtitle-only';
+    const maxDur = isSingleMode
+      ? (data.max_duration_single || 0)
+      : (data.max_duration_video_subtitle || 14400);
+    if (maxDur > 0 && data.duration >= maxDur) {
+      const hours = Math.floor(data.duration / 3600);
+      const maxHours = Math.floor(maxDur / 3600);
+      durWarn.textContent = isSingleMode
+        ? `⚠ هذا الفيديو طويل (${hours} ساعات).`
+        : `⚠ هذا الفيديو طويل (${hours} ساعات). الحد الأقصى للتحميل مع الترجمة ${maxHours} ساعات.`;
+      durWarn.style.display = '';
+    } else {
+      durWarn.style.display = 'none';
+    }
   }
 
   _clearVideo() {
     this.videoInfo.data = null;
     this.videoInfo.cache = new Map();
-    document.getElementById('url-input').value = '';
     document.getElementById('quality-selector').innerHTML = '';
     document.getElementById('quality-section').classList.remove('hidden');
     document.getElementById('subtitle-status').textContent = '';
@@ -164,32 +186,46 @@ class VideoInfo {
     this.data = null;
     this.controller = null;
     this.cache = new Map();
+    this._fetching = false;
   }
 
   reset() {
     this.data = null;
     this.controller = null;
     this.cache = new Map();
+    this._fetching = false;
   }
 
   async fetch() {
+    if (this._fetching) return;
+    this._fetching = true;
+
     const url = document.getElementById('url-input').value.trim();
     if (!url) {
+      this._fetching = false;
       this.app.showError('يرجى إدخال رابط يوتيوب');
-      return;
-    }
-
-    // Cache hit — show instantly
-    if (this.cache.has(url)) {
-      this.data = this.cache.get(url);
-      this.display(this.data);
       return;
     }
 
     const ytRegex = /^(https?:\/\/)?(www\.|m\.)?(youtube\.com|youtu\.be)\/.+/;
     if (!ytRegex.test(url)) {
+      this._fetching = false;
       this.app.showError('رابط يوتيوب غير صالح');
       return;
+    }
+
+    // Cache hit — show instantly
+    if (this.cache.has(url)) {
+      this._fetching = false;
+      this.data = this.cache.get(url);
+      this.display(this.data);
+      return;
+    }
+
+    // Abort previous request if still in-flight
+    if (this.controller) {
+      this.controller.abort();
+      this.controller = null;
     }
 
     this.app.hideError();
@@ -197,7 +233,7 @@ class VideoInfo {
     this.app.ui.showLoading(true);
 
     this.controller = new AbortController();
-    const timeout = setTimeout(() => this.controller.abort(), 30000);
+    const timeout = setTimeout(() => this.controller.abort(), 90000);
 
     try {
       const resp = await fetch(`/api/v1/info?url=${encodeURIComponent(url)}`, {
@@ -216,17 +252,42 @@ class VideoInfo {
         this.cache.delete(first);
       }
       this.display(this.data);
+
+      // Phase 2: if formats not loaded yet, fetch them in background
+      if (!this.data.formats_loaded) {
+        this._loadFormatsInBackground(url);
+      }
     } catch (err) {
       if (err.name === 'AbortError') {
         this.app.showError('انتهت مهلة الاتصال، يرجى المحاولة مجدداً');
       } else {
         this.app.showError(err.message || 'حدث خطأ أثناء جلب المعلومات');
       }
-      this.app.showSection('input');
     } finally {
       clearTimeout(timeout);
       this.app.ui.showLoading(false);
       this.controller = null;
+      this._fetching = false;
+    }
+  }
+
+  async _loadFormatsInBackground(url) {
+    const qSel = document.getElementById('quality-selector');
+    const qSec = document.getElementById('quality-section');
+    qSel.innerHTML = '<div class="quality-option"><span class="spinner"></span> جاري تحميل خيارات الجودة...</div>';
+    qSec.classList.remove('hidden');
+
+    try {
+      const resp = await fetch(`/api/v1/info/formats?url=${encodeURIComponent(url)}`);
+      if (!resp.ok) return;
+      const formatsData = await resp.json();
+      Object.assign(this.data, formatsData);
+      this.data.formats_loaded = true;
+      this.cache.set(url, this.data);
+      this._renderQualityOptions(this.data);
+      this._renderSubtitleStatus(this.data);
+    } catch (err) {
+      qSel.innerHTML = '<div class="quality-option">تعذر تحميل خيارات الجودة، سيتم استخدام أفضل جودة متاحة</div>';
     }
   }
 
@@ -246,39 +307,20 @@ class VideoInfo {
 
     document.getElementById('video-views').textContent = `${this._formatNumber(data.view_count)} مشاهدة`;
 
-    // Quality options
-    const qSel = document.getElementById('quality-selector');
-    qSel.innerHTML = '';
-    const allFormats = [...(data.formats || []), ...(data.audio_formats || [])];
-    if (allFormats.length === 0) {
-      allFormats.push({ format_id: 'best', label: 'أفضل جودة', ext: 'mp4', size: 0 });
+    // Quality options (or placeholder if formats not loaded yet)
+    if (data.formats_loaded) {
+      this._renderQualityOptions(data);
+    } else {
+      const qSel = document.getElementById('quality-selector');
+      qSel.innerHTML = '<div class="quality-option"><span class="spinner"></span> جاري تحميل خيارات الجودة...</div>';
+      document.getElementById('quality-section').classList.remove('hidden');
     }
-    allFormats.forEach((f, idx) => {
-      const div = document.createElement('div');
-      div.className = 'quality-option';
-      const checked = idx === 0 ? 'checked' : '';
-      const sizeText = f.size ? ` (${this._formatSize(f.size)})` : '';
-      const extText = f.ext ? ` .${f.ext}` : '';
-      div.innerHTML = `
-        <input type="radio" name="quality" id="q-${idx}" value="${this._escapeHtml(f.format_id)}" ${checked}>
-        <label for="q-${idx}">${this._escapeHtml(f.label)}${extText}<span class="quality-size">${sizeText}</span></label>
-      `;
-      qSel.appendChild(div);
-    });
 
     // Subtitle status
-    const subStatus = document.getElementById('subtitle-status');
-    if (data.has_arabic_subtitles) {
-      subStatus.textContent = '✓ الترجمة العربية متوفرة';
-      subStatus.className = 'subtitle-badge available';
-    } else if (data.has_auto_subtitles) {
-      subStatus.textContent = '⚡ الترجمة التلقائية متوفرة';
-      subStatus.className = 'subtitle-badge pending';
-    } else {
-      subStatus.textContent = '⚡ سيتم التوليد تلقائياً';
-      subStatus.className = 'subtitle-badge pending';
-    }
+    this._renderSubtitleStatus(data);
     document.getElementById('subtitle-options').classList.toggle('card-hidden', !document.getElementById('include-subtitles').checked);
+
+    this.app._updateDurationWarning(data);
 
     const curMode = document.querySelector('input[name="embed-mode"]:checked')?.value || 'separate';
     this.app._onEmbedModeChange(curMode);
@@ -310,6 +352,41 @@ class VideoInfo {
       bytes /= 1024;
     }
     return `${bytes.toFixed(1)} TB`;
+  }
+
+  _renderQualityOptions(data) {
+    const qSel = document.getElementById('quality-selector');
+    qSel.innerHTML = '';
+    const allFormats = [...(data.formats || []), ...(data.audio_formats || [])];
+    if (allFormats.length === 0) {
+      allFormats.push({ format_id: 'best', label: 'أفضل جودة', ext: 'mp4', size: 0 });
+    }
+    allFormats.forEach((f, idx) => {
+      const div = document.createElement('div');
+      div.className = 'quality-option';
+      const checked = idx === 0 ? 'checked' : '';
+      const sizeText = f.size ? ` (${this._formatSize(f.size)})` : '';
+      const extText = f.ext ? ` .${f.ext}` : '';
+      div.innerHTML = `
+        <input type="radio" name="quality" id="q-${idx}" value="${this._escapeHtml(f.format_id)}" ${checked}>
+        <label for="q-${idx}">${this._escapeHtml(f.label)}${extText}<span class="quality-size">${sizeText}</span></label>
+      `;
+      qSel.appendChild(div);
+    });
+  }
+
+  _renderSubtitleStatus(data) {
+    const subStatus = document.getElementById('subtitle-status');
+    if (data.has_arabic_subtitles) {
+      subStatus.textContent = '✓ الترجمة العربية متوفرة';
+      subStatus.className = 'subtitle-badge available';
+    } else if (data.has_auto_subtitles) {
+      subStatus.textContent = '⚡ الترجمة التلقائية متوفرة';
+      subStatus.className = 'subtitle-badge pending';
+    } else {
+      subStatus.textContent = '⚡ سيتم التوليد تلقائياً';
+      subStatus.className = 'subtitle-badge pending';
+    }
   }
 
   _escapeHtml(str) {

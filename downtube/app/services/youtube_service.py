@@ -1,5 +1,6 @@
 import os
 import asyncio
+import json
 import logging
 import subprocess
 import shlex
@@ -33,7 +34,7 @@ YDL_OPTS_BASE = {
     "retries": 2,
     "fragment_retries": 2,
     "socket_timeout": 30,
-    "extractor_args": {"youtube": {"skip": ["dash", "hls"]}},
+    "extractor_args": {"youtube": {"skip": ["dash", "hls", "webpage", "comments"]}},
     "sleep_interval_requests": 0.5,
 }
 
@@ -72,30 +73,144 @@ def _make_ydl_opts(**extra) -> dict:
     return opts
 
 
-async def extract_info(url: str) -> dict[str, Any]:
-    def _sync_extract():
-        opts = _make_ydl_opts()
+def _ydl_opts_to_cli(opts: dict) -> list[str]:
+    args = []
+    for key, value in opts.items():
+        if key == "quiet" and value:
+            args.append("--quiet")
+        elif key == "no_warnings" and value:
+            args.append("--no-warnings")
+        elif key == "nocheckcertificate" and value:
+            args.append("--no-check-certificates")
+        elif key == "extract_flat" and value:
+            args.append("--extract-flat")
+        elif key == "retries" and isinstance(value, int):
+            args.extend(["--retries", str(value)])
+        elif key == "fragment_retries" and isinstance(value, int):
+            args.extend(["--fragment-retries", str(value)])
+        elif key == "socket_timeout" and isinstance(value, int):
+            args.extend(["--socket-timeout", str(value)])
+        elif key == "user_agent" and value:
+            args.extend(["--user-agent", value])
+        elif key == "extractor_args" and isinstance(value, dict):
+            for extractor, extractor_opts in value.items():
+                for opt_key, opt_values in extractor_opts.items():
+                    joined = ",".join(opt_values) if isinstance(opt_values, list) else str(opt_values)
+                    args.extend(["--extractor-args", f"{extractor}:{opt_key}={joined}"])
+        elif key == "sleep_interval_requests":
+            args.extend(["--sleep-requests", str(value)])
+    return args
+
+
+async def _run_ytdlp(url: str, extra_args: list[str] | None = None, timeout: int = 45) -> dict[str, Any]:
+    process = None
+    try:
+        base_opts = _make_ydl_opts()
+        cli_args = _ydl_opts_to_cli(base_opts)
+        cmd = ["yt-dlp", "--dump-json", "--no-playlist", *cli_args]
+        if extra_args:
+            cmd.extend(extra_args)
+        cmd.append(url)
+
+        logger.debug("تشغيل yt-dlp: %s", " ".join(cmd))
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(), timeout=timeout
+        )
+
+        if process.returncode == 0 and stdout:
+            return json.loads(stdout.decode("utf-8"))
+
+        error_msg = stderr.decode("utf-8", errors="replace") if stderr else ""
+        raise YouTubeError(_map_ydl_error(error_msg), status_code=404)
+
+    except asyncio.TimeoutError:
+        raise YouTubeError(ERROR_MESSAGES["timeout"], status_code=408)
+
+    except json.JSONDecodeError:
+        raise YouTubeError(ERROR_MESSAGES["internal_error"], status_code=500)
+
+    except Exception as e:
+        if isinstance(e, YouTubeError):
+            raise
+        logger.exception("خطأ غير متوقع في yt-dlp")
+        raise YouTubeError(ERROR_MESSAGES["internal_error"], status_code=500)
+
+    finally:
+        if process and process.returncode is None:
+            try:
+                process.kill()
+            except Exception:
+                pass
+
+
+async def _extract_info_impl(url: str, timeout: int = 60) -> dict[str, Any]:
+    loop = asyncio.get_event_loop()
+
+    def _sync():
+        opts = _make_ydl_opts(
+            format="best[height<=1080]+bestaudio/best",
+            socket_timeout=30,
+            noplaylist=True,
+        )
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=False)
 
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(_executor, _sync),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        raise YouTubeError(ERROR_MESSAGES["timeout"], status_code=408)
+    except yt_dlp.utils.DownloadError as e:
+        raise YouTubeError(_map_ydl_error(str(e)), status_code=404)
+    except Exception as e:
+        logger.exception("خطأ غير متوقع في extract_info")
+        raise YouTubeError(ERROR_MESSAGES["internal_error"], status_code=500)
+
+
+async def extract_info_flat(url: str, timeout: int = 15) -> dict[str, Any]:
+    loop = asyncio.get_event_loop()
+
+    def _sync():
+        opts = _make_ydl_opts(
+            noplaylist=True,
+            socket_timeout=15,
+        )
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=False)
+
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(_executor, _sync),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        raise YouTubeError(ERROR_MESSAGES["timeout"], status_code=408)
+    except yt_dlp.utils.DownloadError as e:
+        raise YouTubeError(_map_ydl_error(str(e)), status_code=404)
+    except Exception as e:
+        logger.exception("خطأ غير متوقع في extract_info_flat")
+        raise YouTubeError(ERROR_MESSAGES["internal_error"], status_code=500)
+
+
+async def extract_info(url: str, timeout: int = 60) -> dict[str, Any]:
     for attempt in range(YDL_RETRIES):
         try:
-            loop = asyncio.get_event_loop()
-            info = await loop.run_in_executor(_executor, _sync_extract)
-            return info
-        except yt_dlp.utils.DownloadError as e:
-            err_msg = str(e)
+            return await _extract_info_impl(url, timeout=timeout)
+        except YouTubeError as e:
             if attempt < YDL_RETRIES - 1:
-                logger.warning("محاولة %d/%d فشلت: %s", attempt + 1, YDL_RETRIES, err_msg)
+                logger.warning("محاولة extract_info %d/%d فشلت: %s", attempt + 1, YDL_RETRIES, str(e)[:100])
                 await asyncio.sleep(YDL_DELAY * (attempt + 1))
                 continue
-            raise YouTubeError(_map_ydl_error(err_msg), status_code=403 if "private" in err_msg.lower() else 404)
-        except Exception as e:
-            if isinstance(e, YouTubeError):
-                raise
-            logger.exception("خطأ غير متوقع في extract_info")
-            raise YouTubeError(ERROR_MESSAGES["internal_error"], status_code=500)
-
+            raise
     raise YouTubeError(ERROR_MESSAGES["timeout"], status_code=408)
 
 
@@ -209,8 +324,38 @@ async def download_audio(
             filename = ydl.prepare_filename(info)
             return filename.rsplit(".", 1)[0] + ".mp3"
 
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, _sync_dl)
+    for attempt in range(YDL_RETRIES):
+        try:
+            loop = asyncio.get_event_loop()
+            filename = await asyncio.wait_for(
+                loop.run_in_executor(_executor, _sync_dl),
+                timeout=1800
+            )
+            return filename
+        except asyncio.TimeoutError:
+            if attempt < YDL_RETRIES - 1:
+                logger.warning("محاولة تحميل الصوت %d/%d فشلت (مهلة)", attempt + 1, YDL_RETRIES)
+                await asyncio.sleep(YDL_DELAY * (attempt + 1))
+                continue
+            raise YouTubeError(ERROR_MESSAGES["timeout"], status_code=408)
+        except asyncio.CancelledError:
+            raise
+        except yt_dlp.utils.DownloadError as e:
+            if attempt < YDL_RETRIES - 1:
+                logger.warning("محاولة تحميل الصوت %d/%d فشلت", attempt + 1, YDL_RETRIES)
+                await asyncio.sleep(YDL_DELAY * (attempt + 1))
+                continue
+            raise YouTubeError(_map_ydl_error(str(e)), status_code=400)
+        except YouTubeError:
+            raise
+        except Exception as e:
+            logger.exception("خطأ في تحميل الصوت")
+            if attempt < YDL_RETRIES - 1:
+                await asyncio.sleep(YDL_DELAY * (attempt + 1))
+                continue
+            raise YouTubeError(ERROR_MESSAGES["download_failed"], status_code=500)
+
+    raise YouTubeError(ERROR_MESSAGES["timeout"], status_code=408)
 
 
 async def embed_subtitles(

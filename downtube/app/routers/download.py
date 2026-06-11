@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Qu
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from app.services.youtube_service import download_video, embed_subtitles, YouTubeError
+from app.services.youtube_service import download_video, embed_subtitles, extract_info_flat, YouTubeError
 from app.services.subtitle_service import fetch_subtitles
 from app.utils.file_manager import (
     get_task_dir,
@@ -18,7 +18,11 @@ from app.utils.file_manager import (
     list_files,
     human_size,
     cleanup_task,
+    safe_filename,
 )
+
+MAX_DURATION_VIDEO_SUBTITLE = int(os.getenv("MAX_DURATION_VIDEO_SUBTITLE", "14400"))
+MAX_DURATION_SINGLE = int(os.getenv("MAX_DURATION_SINGLE", "0"))
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +183,24 @@ async def _process_download(task_id: str, req: DownloadRequest):
         })
         await asyncio.sleep(0.3)
 
+        # ── التحقق من المدة حسب نوع التحميل ──
+        needs_duration_check = (req.include_subtitles and not req.subtitle_only)
+        if needs_duration_check:
+            limit = MAX_DURATION_VIDEO_SUBTITLE
+            if limit > 0:
+                try:
+                    info = await extract_info_flat(req.url, timeout=15)
+                    duration = info.get("duration", 0)
+                    if duration > limit:
+                        max_hours = limit // 3600
+                        await _broadcast(task_id, {
+                            "status": "error",
+                            "message": f"مدة الفيديو تتجاوز {max_hours} ساعات. يرجى استخدام تحميل فيديو فقط أو ترجمة فقط.",
+                        })
+                        return
+                except Exception as e:
+                    logger.warning("فشل التحقق من المدة: %s", e)
+
         # ── Subtitle-only mode: لا تحميل فيديو ──
         if req.subtitle_only:
             await _process_subtitle_only(task_id, req, output_dir, cancel_event)
@@ -237,7 +259,41 @@ async def _process_subtitle_only(
         return
 
     subtitle_file = find_subtitle_file(task_id)
-    filesize = os.path.getsize(subtitle_file) if subtitle_file and os.path.exists(subtitle_file) else 0
+    if subtitle_file and os.path.exists(subtitle_file):
+        if os.path.getsize(subtitle_file) == 0:
+            logger.warning("ملف الترجمة 0 بايت — حذف: %s", subtitle_file)
+            try:
+                os.unlink(subtitle_file)
+            except Exception:
+                pass
+            subtitle_file = None
+        else:
+            for f in list_files(task_id):
+                name = f.name.lower()
+                if name.endswith((".mp4", ".mkv", ".webm")) and os.path.isfile(str(f)):
+                    video_base = os.path.splitext(os.path.basename(str(f)))[0]
+                    sub_ext = os.path.splitext(subtitle_file)[1]
+                    new_sub_name = f"{video_base}{sub_ext}"
+                    new_sub_path = os.path.join(output_dir, new_sub_name)
+                    if subtitle_file != new_sub_path and not os.path.exists(new_sub_path):
+                        try:
+                            os.rename(subtitle_file, new_sub_path)
+                            logger.info("إعادة تسمية الترجمة: %s → %s",
+                                        os.path.basename(subtitle_file), new_sub_name)
+                            subtitle_file = new_sub_path
+                        except OSError:
+                            pass
+                    break
+
+    if not subtitle_file:
+        await _broadcast(task_id, {
+            "status": "error",
+            "message": "لم يتم العثور على ترجمة صالحة",
+            "subtitle_only": True,
+        })
+        return
+
+    filesize = os.path.getsize(subtitle_file)
 
     await _broadcast(task_id, {
         "status": "done",
@@ -245,11 +301,11 @@ async def _process_subtitle_only(
         "stage": "done",
         "message": "اكتمل التحميل!",
         "task_id": task_id,
-        "filename": os.path.basename(subtitle_file) if subtitle_file else "subtitles.srt",
+        "filename": os.path.basename(subtitle_file),
         "filesize": human_size(filesize),
         "filesize_bytes": filesize,
         "video_file": None,
-        "subtitle_file": subtitle_file or (subtitle_result.get("path") if subtitle_result else None),
+        "subtitle_file": subtitle_file,
         "subtitle_type": subtitle_result.get("type", "none") if subtitle_result else "none",
         "subtitle_source": subtitle_result.get("source", None) if subtitle_result else None,
         "subtitle_only": True,
@@ -349,10 +405,36 @@ async def _process_sequential_embed(
         except Exception as e:
             logger.warning("فشل دمج الترجمة: %s", e)
 
-    filesize = os.path.getsize(video_file) if video_file and os.path.exists(video_file) else 0
+    # ── تحقق من الفيديو — إذا 0 بايت أو غير موجود ──
+    if video_file and (not os.path.exists(video_file) or os.path.getsize(video_file) == 0):
+        logger.warning("ملف الفيديو 0 بايت أو غير موجود — تجاهل: %s", video_file)
+        video_file = None
+
+    if not video_file:
+        await _broadcast(task_id, {"status": "error", "message": "فشل تحميل الفيديو — الملف الناتج فارغ"})
+        return
+
+    # ── تحقق من الترجمة — تجاهل 0 بايت + إعادة تسمية ──
+    if subtitle_file:
+        if not os.path.exists(subtitle_file) or os.path.getsize(subtitle_file) == 0:
+            logger.warning("ملف الترجمة 0 بايت أو غير موجود — تجاهل: %s", subtitle_file)
+            subtitle_file = None
+        else:
+            video_base = os.path.splitext(os.path.basename(video_file))[0]
+            sub_ext = os.path.splitext(subtitle_file)[1]
+            new_sub_name = f"{video_base}{sub_ext}"
+            new_sub_path = os.path.join(output_dir, new_sub_name)
+            if subtitle_file != new_sub_path and not os.path.exists(new_sub_path):
+                try:
+                    os.rename(subtitle_file, new_sub_path)
+                    subtitle_file = new_sub_path
+                except OSError:
+                    pass
 
     if not embedded and subtitle_file and not subtitle_result:
         subtitle_result = {"path": subtitle_file, "source": "found", "type": "unknown"}
+
+    filesize = os.path.getsize(video_file)
 
     await _broadcast(task_id, {
         "status": "done",
@@ -360,7 +442,7 @@ async def _process_sequential_embed(
         "stage": "done",
         "message": "اكتمل التحميل!",
         "task_id": task_id,
-        "filename": os.path.basename(video_file) if video_file else "video.mp4",
+        "filename": os.path.basename(video_file),
         "filesize": human_size(filesize),
         "filesize_bytes": filesize,
         "video_file": video_file,
@@ -452,7 +534,6 @@ async def _process_parallel(
     if subtitle_result and subtitle_result.get("path"):
         subtitle_path = subtitle_result.get("path")
     elif subtitle_result:
-        # ابحث عن ملف الترجمة في مجلد المهمة
         found = find_subtitle_file(task_id)
         if found:
             subtitle_path = found
@@ -469,16 +550,51 @@ async def _process_parallel(
         if candidates:
             video_file = max(candidates, key=os.path.getsize)
 
-    # التحقق من أخطاء الفيديو
     video_error = next((e for e in errors if e[0] == "video"), None)
     if video_error and not video_file:
         await _broadcast(task_id, {"status": "error", "message": video_error[1]})
         return
 
-    filesize = os.path.getsize(video_file) if video_file and os.path.exists(video_file) else 0
-
-    # التأكد من إرسال مسار الترجمة الصحيح
+    # ── تحسين الترجمة: تجاهل 0 بايت + إعادة تسمية ──
     final_subtitle_path = subtitle_path or (subtitle_result.get("path") if subtitle_result else None)
+    if final_subtitle_path:
+        if not os.path.exists(final_subtitle_path) or os.path.getsize(final_subtitle_path) == 0:
+            logger.warning("ملف الترجمة 0 بايت أو غير موجود — تجاهل: %s", final_subtitle_path)
+            try:
+                if os.path.exists(final_subtitle_path):
+                    os.unlink(final_subtitle_path)
+            except Exception:
+                pass
+            final_subtitle_path = None
+            subtitle_result = {"path": None, "source": None, "type": "none"}
+        else:
+            for f in list_files(task_id):
+                name = f.name.lower()
+                if name.endswith((".mp4", ".mkv", ".webm")) and os.path.isfile(str(f)):
+                    video_base = os.path.splitext(os.path.basename(str(f)))[0]
+                    sub_ext = os.path.splitext(final_subtitle_path)[1]
+                    new_sub_name = f"{video_base}{sub_ext}"
+                    new_sub_path = os.path.join(output_dir, new_sub_name)
+                    if final_subtitle_path != new_sub_path and not os.path.exists(new_sub_path):
+                        try:
+                            os.rename(final_subtitle_path, new_sub_path)
+                            logger.info("إعادة تسمية الترجمة: %s → %s",
+                                        os.path.basename(final_subtitle_path), new_sub_name)
+                            final_subtitle_path = new_sub_path
+                        except OSError:
+                            pass
+                    break
+
+    # ── التحقق من الفيديو ──
+    if video_file and (not os.path.exists(video_file) or os.path.getsize(video_file) == 0):
+        logger.warning("ملف الفيديو 0 بايت أو غير موجود — تجاهل: %s", video_file)
+        video_file = None
+
+    if not video_file:
+        await _broadcast(task_id, {"status": "error", "message": "فشل تحميل الفيديو — الملف الناتج فارغ"})
+        return
+
+    filesize = os.path.getsize(video_file)
 
     await _broadcast(task_id, {
         "status": "done",
@@ -486,7 +602,7 @@ async def _process_parallel(
         "stage": "done",
         "message": "اكتمل التحميل!",
         "task_id": task_id,
-        "filename": os.path.basename(video_file) if video_file else "video.mp4",
+        "filename": os.path.basename(video_file),
         "filesize": human_size(filesize),
         "filesize_bytes": filesize,
         "video_file": video_file,
@@ -507,10 +623,13 @@ async def download_file(
 ):
     output_dir = str(get_task_dir(task_id))
 
+    def _valid_file(p: str) -> bool:
+        return bool(p) and os.path.exists(p) and os.path.isfile(p) and os.path.getsize(p) > 0
+
     # إذا تم تحديد اسم ملف، ابحث عنه مباشرة
     if filename:
         direct_path = os.path.join(output_dir, filename)
-        if os.path.exists(direct_path) and os.path.isfile(direct_path):
+        if _valid_file(direct_path):
             return FileResponse(
                 path=direct_path,
                 filename=filename,
@@ -521,15 +640,22 @@ async def download_file(
     if file_type == "subtitle":
         filepath = find_subtitle_file(task_id)
     else:
-        # للفيديو: فضّل الملف المدمج (_embedded) إن وجد
         filepath = _find_embedded_video(task_id) or find_video_file(task_id)
 
-    if not filepath or not os.path.exists(filepath):
-        candidates = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if os.path.isfile(os.path.join(output_dir, f))]
+    if not filepath or not _valid_file(filepath):
+        candidates = [
+            os.path.join(output_dir, f)
+            for f in os.listdir(output_dir)
+            if os.path.isfile(os.path.join(output_dir, f))
+        ]
         if candidates:
-            filepath = max(candidates, key=os.path.getsize)
+            candidates.sort(key=lambda p: os.path.getsize(p), reverse=True)
+            filepath = next((p for p in candidates if _valid_file(p)), None)
         else:
-            raise HTTPException(status_code=404, detail="الملف غير موجود")
+            filepath = None
+
+    if not filepath:
+        raise HTTPException(status_code=404, detail="الملف غير موجود أو غير صالح")
 
     return FileResponse(
         path=filepath,

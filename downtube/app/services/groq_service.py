@@ -313,7 +313,13 @@ async def _transcribe_chunk_groq(
         return transcription
 
     loop = asyncio.get_event_loop()
-    transcription = await loop.run_in_executor(None, _call)
+    try:
+        transcription = await asyncio.wait_for(
+            loop.run_in_executor(None, _call),
+            timeout=120
+        )
+    except asyncio.TimeoutError:
+        raise GroqServiceError("Groq Whisper API لم يستجب خلال 120 ثانية")
 
     # استخراج الشرائح مع تصحيح الـ timestamps
     segments = []
@@ -539,7 +545,8 @@ async def generate_subtitles(
         if needs_translation:
             if progress_callback:
                 progress_callback(70, 0, 0, "جاري ترجمة النص...")
-            all_segments = translate_segments_to_arabic(all_segments, video_title=title)
+            loop = asyncio.get_event_loop()
+            all_segments = await loop.run_in_executor(None, translate_segments_to_arabic, all_segments, title)
             all_segments = merge_short_segments(all_segments)
             if progress_callback:
                 progress_callback(90, 0, 0, "تمت الترجمة")

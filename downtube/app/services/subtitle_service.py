@@ -121,7 +121,7 @@ async def fetch_subtitles(
         if progress_callback:
             progress_callback(0, 0, 0, "جاري تحميل الصوت للتوليد...")
 
-        audio_path = await yt_download_audio(url, output_dir)
+        audio_path = await yt_download_audio(url, output_dir, progress_callback=progress_callback)
         if not audio_path or not os.path.exists(audio_path):
             raise SubtitleError("فشل تحميل ملف الصوت للتوليد")
 
