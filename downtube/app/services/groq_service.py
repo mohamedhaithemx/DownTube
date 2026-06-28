@@ -247,29 +247,49 @@ def _find_nearest_silence(
 async def _extract_chunk(
     audio_path: str, start: float, end: float, output_path: str
 ):
-    """استخراج جزء من الصوت باستخدام FFmpeg"""
+    """استخراج جزء من الصوت باستخدام FFmpeg مع دقة عالية في التحديد الزمني"""
     duration = end - start
 
     def _run():
-        # محاولة copy أولاً (أسرع)
+        # محاولة copy أولاً — وضع -ss قبل -i للدقة الأعلى في التحديد
         cmd_copy = [
             "ffmpeg", "-y",
-            "-i", audio_path,
             "-ss", str(start),
+            "-i", audio_path,
             "-t", str(duration),
             "-c", "copy",
             output_path,
         ]
         result = subprocess.run(cmd_copy, capture_output=True, text=True, timeout=120)
         if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            return
+            # تحقق من أن وقت البداية الفعلي قريب من المطلوب
+            try:
+                probe_cmd = ["ffprobe", "-v", "quiet", "-print_format", "json",
+                             "-show_entries", "format=start_time", output_path]
+                probe_r = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=10)
+                if probe_r.returncode == 0:
+                    probe_data = json.loads(probe_r.stdout)
+                    actual_start = float(probe_data.get("format", {}).get("start_time", 0))
+                    if actual_start > 0.5:
+                        # بداية الملف بعيدة عن 0 — أعد الترميز للدقة
+                        logger.debug(
+                            "chunk من %.0f-%.0f: start_time=%.2f (بعيد عن 0) — إعادة ترميز",
+                            start, end, actual_start,
+                        )
+                        os.unlink(output_path)
+                    else:
+                        return
+            except Exception:
+                pass  # لا ffprobe — نقبل النتيجة
+            else:
+                return
 
-        # Fallback: إعادة ترميز
+        # Fallback: إعادة ترميز مع -ss قبل -i للدقة
         logger.debug("copy فشل للجزء %.0f-%.0f — إعادة ترميز", start, end)
         cmd_reencode = [
             "ffmpeg", "-y",
-            "-i", audio_path,
             "-ss", str(start),
+            "-i", audio_path,
             "-t", str(duration),
             "-ar", "16000",
             "-ac", "1",

@@ -623,16 +623,33 @@ async def download_file(
 ):
     output_dir = str(get_task_dir(task_id))
 
+    # التحقق من أن task_id صالح (منع traversal عبر task_id نفسه)
+    safe_task = "".join(c for c in task_id if c.isalnum() or c in "-_")
+    if safe_task != task_id:
+        raise HTTPException(status_code=400, detail="معرف المهمة غير صالح")
+
     def _valid_file(p: str) -> bool:
         return bool(p) and os.path.exists(p) and os.path.isfile(p) and os.path.getsize(p) > 0
 
-    # إذا تم تحديد اسم ملف، ابحث عنه مباشرة
+    def _safe_path(requested_filename: str) -> str | None:
+        """بناء مسار آمن — التحقق من أن المسار الناتج يبقى داخل output_dir"""
+        # تنظيف اسم الملف من أي مسارات نسبية
+        base_name = os.path.basename(requested_filename)
+        if not base_name:
+            return None
+        full_path = os.path.normpath(os.path.join(output_dir, base_name))
+        # التحقق من أن المسار النهائي يبدأ بـ output_dir
+        if not full_path.startswith(os.path.normpath(output_dir) + os.sep) and full_path != os.path.normpath(output_dir):
+            return None
+        return full_path
+
+    # إذا تم تحديد اسم ملف، ابحث عنه مباشرة — بسلامة من traversal
     if filename:
-        direct_path = os.path.join(output_dir, filename)
-        if _valid_file(direct_path):
+        safe_filepath = _safe_path(filename)
+        if safe_filepath and _valid_file(safe_filepath):
             return FileResponse(
-                path=direct_path,
-                filename=filename,
+                path=safe_filepath,
+                filename=os.path.basename(safe_filepath),
                 media_type="application/octet-stream",
             )
 

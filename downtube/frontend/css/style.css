@@ -189,6 +189,12 @@ body {
   color: var(--primary);
 }
 
+.btn-paste:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  opacity: 1;
+}
+
 .btn-paste svg { width: 22px; height: 22px; }
 
 /* ── Buttons ── */
@@ -242,6 +248,12 @@ body {
   color: var(--primary-alt);
 }
 
+.btn-secondary:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .btn-success {
   background: linear-gradient(135deg, #0a8050, var(--success));
   color: #fff;
@@ -253,6 +265,12 @@ body {
   box-shadow: 0 6px 32px rgba(16, 160, 96, 0.4);
 }
 
+.btn-success:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .btn-danger {
   background: rgba(208, 48, 64, 0.1);
   color: var(--error);
@@ -261,6 +279,11 @@ body {
 
 .btn-danger:hover {
   background: rgba(208, 48, 64, 0.2);
+}
+
+.btn-danger:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .btn-full {
@@ -293,6 +316,12 @@ body {
   background: rgba(208, 48, 64, 0.14);
 }
 
+.btn-outline:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .btn-link {
   background: none;
   border: none;
@@ -305,6 +334,11 @@ body {
 }
 
 .btn-link:hover { opacity: 1; }
+
+.btn-link:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
 
 .ripple {
   position: relative;
@@ -328,6 +362,33 @@ body {
   background-size: 1000%;
   opacity: 1;
   transition: 0s;
+}
+
+/* ── Global Focus States ── */
+.btn:focus-visible {
+  outline: 2px solid var(--primary-alt);
+  outline-offset: 2px;
+}
+
+.input-row input:focus-visible {
+  outline: 2px solid var(--primary-alt);
+  outline-offset: 2px;
+}
+
+.quality-option input:checked + label {
+  border-color: var(--primary);
+  background: rgba(10, 110, 255, 0.1);
+  box-shadow: 0 0 24px var(--glow);
+}
+
+.subtitle-toggle input:focus-visible + .subtitle-toggle-track {
+  outline: 2px solid var(--primary-alt);
+  outline-offset: 2px;
+}
+
+.embed-option input:focus-visible + .embed-option-content {
+  outline: 2px solid var(--primary-alt);
+  outline-offset: 2px;
 }
 
 /* ── Spinner ── */
@@ -796,33 +857,59 @@ body {
   50% { box-shadow: 0 4px 48px var(--glow-strong); }
 }
 
-/* ── Moving Background Orb ── */
+/* ── Moving Background Orbs ── */
 .bg-orb {
   position: fixed;
-  width: 600px;
-  height: 600px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(10, 110, 255, 0.04) 0%, transparent 70%);
   pointer-events: none;
   z-index: 0;
-  animation: orbMove 14s ease-in-out infinite alternate;
+  will-change: transform, opacity;
 }
 
-.bg-orb:nth-child(2) {
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle, rgba(26, 42, 74, 0.03) 0%, transparent 70%);
-  animation: orbMove2 12s ease-in-out infinite alternate;
+.bg-orb-1 {
+  width: 600px;
+  height: 600px;
+  top: -120px;
+  left: -120px;
+  background: radial-gradient(circle, rgba(10, 110, 255, 0.05) 0%, transparent 70%);
+  animation: orbMove1 18s ease-in-out infinite alternate;
 }
 
-@keyframes orbMove {
-  0% { transform: translate(-100px, -80px) scale(1); }
-  100% { transform: translate(100px, 80px) scale(1.2); }
+.bg-orb-2 {
+  width: 420px;
+  height: 420px;
+  bottom: -100px;
+  right: -100px;
+  background: radial-gradient(circle, rgba(26, 42, 74, 0.04) 0%, transparent 70%);
+  animation: orbMove2 14s ease-in-out infinite alternate;
+}
+
+.bg-orb-3 {
+  width: 350px;
+  height: 350px;
+  top: 40%;
+  left: 50%;
+  background: radial-gradient(circle, rgba(59, 139, 255, 0.03) 0%, transparent 70%);
+  animation: orbMove3 22s ease-in-out infinite alternate;
+}
+
+@keyframes orbMove1 {
+  0% { transform: translate(-100px, -80px) scale(1); opacity: 0.8; }
+  50% { opacity: 1; }
+  100% { transform: translate(120px, 100px) scale(1.15); opacity: 0.7; }
 }
 
 @keyframes orbMove2 {
-  0% { transform: translate(80px, 60px) scale(1); }
-  100% { transform: translate(-80px, -60px) scale(1.25); }
+  0% { transform: translate(80px, 60px) scale(1); opacity: 0.7; }
+  50% { opacity: 1; }
+  100% { transform: translate(-100px, -80px) scale(1.2); opacity: 0.6; }
+}
+
+@keyframes orbMove3 {
+  0% { transform: translate(-50%, -50%) scale(0.8); opacity: 0; }
+  20% { opacity: 0.6; }
+  80% { opacity: 0.5; }
+  100% { transform: translate(-30%, -40%) scale(1.3); opacity: 0; }
 }
 
 /* ── Background Decorations ── */
@@ -832,9 +919,16 @@ body::before {
   inset: 0;
   background:
     radial-gradient(ellipse 700px 500px at 10% 80%, rgba(10, 110, 255, 0.04) 0%, transparent 100%),
-    radial-gradient(ellipse 500px 500px at 90% 90%, rgba(26, 42, 74, 0.03) 0%, transparent 100%);
+    radial-gradient(ellipse 500px 500px at 90% 90%, rgba(26, 42, 74, 0.03) 0%, transparent 100%),
+    radial-gradient(ellipse 400px 400px at 50% 20%, rgba(59, 139, 255, 0.02) 0%, transparent 100%);
   pointer-events: none;
   z-index: 0;
+  animation: bgShift 30s ease-in-out infinite alternate;
+}
+
+@keyframes bgShift {
+  0% { opacity: 1; }
+  100% { opacity: 0.6; }
 }
 
 body::after {
@@ -862,4 +956,7 @@ body::after {
   .progress-percent { font-size: 40px; }
   .result-buttons .btn { min-width: 140px; }
   .embed-options { grid-template-columns: 1fr; }
+  .bg-orb-1 { width: 350px; height: 350px; }
+  .bg-orb-2 { width: 250px; height: 250px; }
+  .bg-orb-3 { width: 200px; height: 200px; }
 }

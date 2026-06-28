@@ -12,8 +12,9 @@
 <body>
 
   <!-- ─── Moving Background Orbs ─── -->
-  <div class="bg-orb" style="top:-100px;left:-100px;"></div>
-  <div class="bg-orb" style="bottom:-80px;right:-80px;"></div>
+  <div class="bg-orb bg-orb-1"></div>
+  <div class="bg-orb bg-orb-2"></div>
+  <div class="bg-orb bg-orb-3"></div>
 
   <!-- ─── Header ─── -->
   <header class="header">
@@ -38,7 +39,7 @@
     <section id="section-input" class="card">
       <div class="input-row">
         <input type="url" id="url-input" placeholder="الصق رابط يوتيوب هنا..." autocomplete="url" dir="ltr">
-        <button id="paste-btn" class="btn-paste" title="لصق من الحافظة" type="button">
+        <button id="paste-btn" class="btn-paste" title="لصق من الحافظة" aria-label="لصق من الحافظة" type="button">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
           </svg>
@@ -120,7 +121,7 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span id="download-btn-text">تحميل الآن</span>
         </button>
-        <button id="clear-btn" class="btn btn-outline ripple" type="button" title="مسح">
+        <button id="clear-btn" class="btn btn-outline ripple" type="button" title="مسح" aria-label="مسح المعلومات">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
@@ -139,7 +140,7 @@
           <span id="progress-eta"></span>
         </div>
         <div class="progress-actions">
-          <button id="cancel-btn" class="btn btn-danger ripple" type="button">
+          <button id="cancel-btn" class="btn btn-danger ripple" type="button" aria-label="إلغاء التحميل">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             إلغاء
           </button>

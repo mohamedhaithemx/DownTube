@@ -14,7 +14,12 @@ def _format_timestamp(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
-def merge_short_segments(segments: list[dict], min_duration: float = 1.0) -> list[dict]:
+def merge_short_segments(segments: list[dict], min_duration: float = 1.0, max_gap: float = 2.0) -> list[dict]:
+    """
+    دمج المقاطع القصيرة في المقاطع السابقة.
+    max_gap: أقصى فجوة زمنية (ثانية) بين نهاية المقطع السابق وبداية المقطع الحالي
+    للسماح بالدمج — يمنع دمج مقاطع بعيدة زمنياً مما يسبب ظهور الترجمة مبكراً.
+    """
     if not segments:
         return []
     merged = []
@@ -25,8 +30,13 @@ def merge_short_segments(segments: list[dict], min_duration: float = 1.0) -> lis
             continue
         if duration < min_duration and merged:
             prev = merged[-1]
-            prev["end"] = seg["end"]
-            prev["text"] = (prev["text"].rstrip(".!?،؛") + " " + text).strip()
+            gap = seg.get("start", 0) - prev.get("end", 0)
+            if gap <= max_gap:
+                prev["end"] = seg["end"]
+                prev["text"] = (prev["text"].rstrip(".!?،؛") + " " + text).strip()
+            else:
+                # الفجوة كبيرة — لا دمج، أضف كمقطع مستقل
+                merged.append(dict(seg))
         else:
             merged.append(dict(seg))
     return merged
@@ -55,7 +65,7 @@ def translate_segments_to_arabic(segments: list[dict], video_title: str = "", cl
     if not text_parts:
         return segments
 
-    batch_size = 50  # 70B يتعامل مع context أكبر بكفاءة
+    batch_size = 18  # حجم أصغر لتقليل اقتطاع JSON — 70B يتعامل معه بكفاءة
     translated_segments = list(segments)
 
     model = "llama-3.3-70b-versatile"
@@ -75,6 +85,7 @@ def translate_segments_to_arabic(segments: list[dict], video_title: str = "", cl
             "- الأرقام والأسماء الخاصة: اتركها كما هي\n"
             "- أعد JSON فقط، بدون أي نص إضافي:\n"
             '{"translations": ["الترجمة 0", "الترجمة 1", ...]}\n\n'
+            f"عدد النصوص المطلوب ترجمتها بالضبط: {len(batch_texts)}\n\n"
             f"عنوان الفيديو: {video_title if video_title else 'غير معروف'}\n\n"
             f"النصوص:\n{texts_json}"
         )
@@ -108,15 +119,57 @@ def translate_segments_to_arabic(segments: list[dict], video_title: str = "", cl
                     if idx < len(translated_segments):
                         translated_segments[idx]["text"] = tline
             else:
+                # ── إعادة محاولة واحدة تلقائية عند عدم تطابق العدد ──
                 logger.warning(
-                    "عدد الترجمات (%d) لا يساوي المدخل (%d) — محاولة مطابقة جزئية",
+                    "عدد الترجمات (%d) لا يساوي المدخل (%d) — إعادة محاولة واحدة",
                     len(translated_lines), len(batch_texts),
                 )
-                # مطابقة جزئية: املأ بقدر ما أمكن
-                for i, tline in enumerate(translated_lines):
-                    idx = batch_start + i
-                    if idx < len(translated_segments):
-                        translated_segments[idx]["text"] = tline
+                try:
+                    retry_response = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": (
+                                    "أنت مترجم محترف للعربية. ترجم النصوص ترجمة طبيعية سلسة. "
+                                    "أعد النتيجة كـ JSON فقط بالتنسيق: "
+                                    '{"translations": ["ترجمة 1", "ترجمة 2", ...]}'
+                                ),
+                            },
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=0.3,
+                        max_tokens=4096,
+                        response_format={"type": "json_object"},
+                    )
+                    retry_translated = retry_response.choices[0].message.content.strip()
+                    translated_lines = _parse_json_translations(retry_translated, len(batch_texts))
+                except Exception as retry_err:
+                    logger.warning("إعادة محاولة الترجمة فشلت: %s", retry_err)
+
+                if len(translated_lines) == len(batch_texts):
+                    for i, tline in enumerate(translated_lines):
+                        idx = batch_start + i
+                        if idx < len(translated_segments):
+                            translated_segments[idx]["text"] = tline
+                else:
+                    # مطابقة جزئية بعد إعادة المحاولة — تسجيل المقاطع غير المترجمة
+                    logger.warning(
+                        "بعد إعادة المحاولة: عدد الترجمات (%d) لا يزال لا يساوي المدخل (%d) — مطابقة جزئية",
+                        len(translated_lines), len(batch_texts),
+                    )
+                    for i, tline in enumerate(translated_lines):
+                        idx = batch_start + i
+                        if idx < len(translated_segments):
+                            translated_segments[idx]["text"] = tline
+                    # تسجيل المقاطع التي لم تُترجم
+                    for i in range(len(translated_lines), len(batch_texts)):
+                        idx = batch_start + i
+                        if idx < len(translated_segments):
+                            logger.warning(
+                                "مقطع #%d لم يُترجم — النص الأصلي: '%s'",
+                                idx, batch_texts[i][:80],
+                            )
 
         except json.JSONDecodeError as e:
             logger.warning("فشل تحليل JSON من %s: %s — محاولة استخراج يدوي", model, e)
@@ -125,8 +178,24 @@ def translate_segments_to_arabic(segments: list[dict], video_title: str = "", cl
                 idx = batch_start + i
                 if idx < len(translated_segments):
                     translated_segments[idx]["text"] = tline
+            # تسجيل المقاطع المفقودة
+            for i in range(len(translated_lines), len(batch_texts)):
+                idx = batch_start + i
+                if idx < len(translated_segments):
+                    logger.warning(
+                        "مقطع #%d لم يُترجم (JSON فاسد) — النص الأصلي: '%s'",
+                        idx, batch_texts[i][:80],
+                    )
         except Exception as e:
             logger.warning("فشلت الترجمة بالموديل %s: %s", model, e)
+            # تسجيل جميع مقاطع الدفعة كغير مترجمة
+            for i in range(len(batch_texts)):
+                idx = batch_start + i
+                if idx < len(translated_segments):
+                    logger.warning(
+                        "مقطع #%d لم يُترجم (استثناء) — النص الأصلي: '%s'",
+                        idx, batch_texts[i][:80],
+                    )
 
     return translated_segments
 
