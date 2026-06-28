@@ -428,7 +428,7 @@ body {
 .video-duration {
   position: absolute;
   bottom: 12px;
-  left: 12px;
+  right: 12px;
   background: rgba(10, 110, 255, 0.85);
   color: #fff;
   padding: 5px 14px;
@@ -545,7 +545,7 @@ body {
   content: '';
   position: absolute;
   top: 3px;
-  left: 3px;
+  right: 3px;
   width: 20px;
   height: 20px;
   background: var(--text-muted);
@@ -558,7 +558,7 @@ body {
 }
 
 .subtitle-toggle input:checked + .subtitle-toggle-track::after {
-  left: 25px;
+  right: 25px;
   background: #fff;
 }
 
@@ -572,7 +572,7 @@ body {
   font-size: 12px;
   padding: 4px 12px;
   border-radius: 20px;
-  margin-right: auto;
+  margin-left: auto;
   white-space: nowrap;
 }
 
