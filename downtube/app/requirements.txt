@@ -9,6 +9,7 @@ python-dotenv>=1.0.1
 pydantic>=2.10.0
 slowapi>=0.1.9
 websockets>=14.1
+huggingface-hub>=0.20.0
 
 # ── ملاحظة هامة: يجب تثبيت FFmpeg على الجهاز ──
 # Windows: winget install ffmpeg
