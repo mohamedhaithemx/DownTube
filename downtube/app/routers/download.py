@@ -62,7 +62,7 @@ async def _broadcast(task_id: str, data: dict):
 class CombinedProgressTracker:
     """
     يتتبع تقدم المهام المتوازية (ترجمة + تحميل فيديو)
-    ويُبلغ عن نسبة مدمجة تتحرك بنعومة 1% في كل مرة.
+    ويُبلغ عن نسبة مدمجة مع heartbeat لمنع التوقف.
     """
 
     def __init__(self, task_id: str):
@@ -72,64 +72,151 @@ class CombinedProgressTracker:
         self.subtitle_weight = 0.6
         self.video_weight = 0.4
         self.last_reported = -1
+        self._last_message = ""
         self._lock = asyncio.Lock()
+        self._heartbeat_task = None
 
-    async def update_subtitle(self, pct: float):
+    async def update_subtitle(self, pct: float, message: str = None):
         async with self._lock:
             self.subtitle_pct = min(100, pct)
+            if message:
+                self._last_message = message
             await self._report()
+            self._start_heartbeat()
 
-    async def update_video(self, pct: float):
+    async def update_video(self, pct: float, message: str = None):
         async with self._lock:
             self.video_pct = min(100, pct)
+            if message:
+                self._last_message = message
             await self._report()
+            self._start_heartbeat()
 
     async def _report(self):
         combined = self.subtitle_pct * self.subtitle_weight + self.video_pct * self.video_weight
-        combined = min(99, combined)
-        if int(combined) > self.last_reported:
+        # نسمح بالوصول لـ 100 فقط لو كل المهام اكتملت فعلاً
+        if combined >= 100 and (self.subtitle_pct < 100 or self.video_pct < 100):
+            combined = 99
+        combined = min(100, combined)
+        if int(combined) > self.last_reported or combined >= 100:
             self.last_reported = int(combined)
+            stage = self._current_stage()
             await _broadcast(self.task_id, {
                 "status": "progress",
                 "percent": round(combined, 1),
-                "stage": self._current_stage(),
-                "message": self._current_message(),
+                "stage": stage,
+                "message": self._last_message or self._current_message(stage),
             })
 
+    def _start_heartbeat(self):
+        """إعادة بث آخر قيمة كل 15 ثانية لمنع الشعور بالتوقف"""
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            return
+
+        async def _hb():
+            try:
+                await asyncio.sleep(15)
+                async with self._lock:
+                    combined = self.subtitle_pct * self.subtitle_weight + self.video_pct * self.video_weight
+                    if combined >= 100 and (self.subtitle_pct < 100 or self.video_pct < 100):
+                        combined = 99
+                    combined = min(100, combined)
+                    stage = self._current_stage()
+                    await _broadcast(self.task_id, {
+                        "status": "progress",
+                        "percent": round(combined, 1),
+                        "stage": stage,
+                        "message": self._last_message or self._current_message(stage),
+                    })
+            except Exception:
+                pass
+
+        self._heartbeat_task = asyncio.create_task(_hb())
+
     def _current_stage(self) -> str:
-        if self.subtitle_pct < 5:
+        if self.subtitle_pct < 10:
+            return "subtitle_fetch"
+        if self.subtitle_pct < 30:
             return "audio_prep"
-        if self.subtitle_pct < 65:
+        if self.subtitle_pct < 75:
             return "transcribing"
-        if self.subtitle_pct < 90:
+        if self.subtitle_pct < 95:
             return "translating"
         return "downloading"
 
-    def _current_message(self) -> str:
-        stage = self._current_stage()
+    def _current_message(self, stage: str = None) -> str:
+        s = stage or self._current_stage()
         messages = {
+            "subtitle_fetch": "جاري فحص الترجمات المتاحة...",
             "audio_prep": "جاري تحضير الصوت...",
             "transcribing": "جاري نسخ الصوت...",
             "translating": "جاري ترجمة النص...",
             "downloading": "جاري تحميل الفيديو...",
         }
-        return messages.get(stage, "جاري المعالجة...")
+        return messages.get(s, "جاري المعالجة...")
 
 
 # ── Progress Callback Factories ──────────────────────────────────────
 
+def _stage_from_msg(message: str) -> str:
+    if not message:
+        return "processing"
+    msg_lower = message.lower()
+    if "صوت" in msg_lower or "تحويل" in msg_lower or "audio" in msg_lower:
+        return "audio_prep"
+    if "نسخ" in msg_lower or "transcrib" in msg_lower:
+        return "transcribing"
+    if "ترجم" in msg_lower or "translat" in msg_lower:
+        return "translating"
+    if "حفظ" in msg_lower or "srt" in msg_lower or "تنسيق" in msg_lower:
+        return "saving"
+    if "تحميل" in msg_lower or "download" in msg_lower:
+        return "downloading"
+    if "فحص" in msg_lower or "ترجمات" in msg_lower or "subtitle" in msg_lower:
+        return "subtitle_fetch"
+    return "processing"
+
+
 def _progress_cb_factory(task_id: str):
+    last_pct = [-1]
+    heartbeat_task = [None]
+
+    async def _hb(pct: float, stage: str, message: str):
+        try:
+            await asyncio.sleep(15)
+            nonlocal_result = {
+                "status": "progress",
+                "percent": round(pct, 1),
+                "stage": stage,
+                "message": message or "جاري المعالجة...",
+            }
+            await _broadcast(task_id, nonlocal_result)
+        except Exception:
+            pass
+
     loop = asyncio.get_running_loop()
     def cb(pct: float, speed: float, eta: float, message: str = None):
-        msg = {
-            "status": "downloading",
-            "percent": round(pct, 1),
-            "speed": speed,
-            "eta": eta,
-        }
-        if message:
-            msg["message"] = message
-        asyncio.run_coroutine_threadsafe(_broadcast(task_id, msg), loop)
+        nonlocal last_pct, heartbeat_task
+        if int(pct) > last_pct[0] or pct >= 100:
+            last_pct[0] = int(pct)
+            stage = _stage_from_msg(message or "")
+            msg = {
+                "status": "downloading",
+                "percent": round(pct, 1),
+                "speed": speed,
+                "eta": eta,
+                "stage": stage,
+            }
+            if message:
+                msg["message"] = message
+            asyncio.run_coroutine_threadsafe(_broadcast(task_id, msg), loop)
+            # Heartbeat — أعد بث آخر قيمة بعد 15 ثانية
+            if heartbeat_task[0] and not heartbeat_task[0].done():
+                try:
+                    heartbeat_task[0].cancel()
+                except Exception:
+                    pass
+            heartbeat_task[0] = asyncio.create_task(_hb(pct, stage, message))
     return cb
 
 
@@ -137,7 +224,7 @@ def _subtitle_progress_cb(tracker: CombinedProgressTracker):
     """Callback لتحديث تقدم الترجمة عبر CombinedProgressTracker"""
     loop = asyncio.get_running_loop()
     def cb(pct: float, speed: float, eta: float, message: str = None):
-        asyncio.run_coroutine_threadsafe(tracker.update_subtitle(pct), loop)
+        asyncio.run_coroutine_threadsafe(tracker.update_subtitle(pct, message), loop)
     return cb
 
 
@@ -145,7 +232,7 @@ def _video_progress_cb(tracker: CombinedProgressTracker):
     """Callback لتحديث تقدم تحميل الفيديو عبر CombinedProgressTracker"""
     loop = asyncio.get_running_loop()
     def cb(pct: float, speed: float, eta: float, message: str = None):
-        asyncio.run_coroutine_threadsafe(tracker.update_video(pct), loop)
+        asyncio.run_coroutine_threadsafe(tracker.update_video(pct, message), loop)
     return cb
 
 

@@ -31,9 +31,10 @@ _model = None
 _model_lock = threading.Lock()
 
 # ── Settings ────────────────────────────────────────────────────────
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "medium")
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+WHISPER_MODEL_DIR = os.getenv("WHISPER_MODEL_DIR", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 CHUNK_DURATION_SEC = 540  # 9 دقائق — أقصى مدة لكل جزء
@@ -91,17 +92,52 @@ def _get_model() -> WhisperModel:
     if _model is None:
         with _model_lock:
             if _model is None:
+                model_path = WHISPER_MODEL_SIZE
+
+                # إذا كان WHISPER_MODEL_DIR محدد — نستخدم cached path
+                if WHISPER_MODEL_DIR:
+                    model_path = WHISPER_MODEL_DIR
+                    if not os.path.exists(model_path):
+                        logger.info(
+                            "النموذج غير موجود في %s — جاري التحميل...",
+                            model_path,
+                        )
+                        os.makedirs(model_path, exist_ok=True)
+                        _download_model(WHISPER_MODEL_SIZE, model_path)
+
                 logger.info(
                     "تحميل نموذج faster-whisper %s على %s (%s)",
                     WHISPER_MODEL_SIZE, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE,
                 )
                 _model = WhisperModel(
-                    WHISPER_MODEL_SIZE,
+                    model_path,
                     device=WHISPER_DEVICE,
                     compute_type=WHISPER_COMPUTE_TYPE,
+                    download_root=WHISPER_MODEL_DIR or None,
                 )
                 logger.info("تم تحميل النموذج بنجاح")
     return _model
+
+
+def _download_model(model_size: str, target_dir: str):
+    """تحميل نموذج faster-whisper إلى target_dir"""
+    try:
+        from huggingface_hub import snapshot_download
+
+        repo_id = f"guillaumeklf/faster-whisper-{model_size}"
+        logger.info("جاري تحميل النموذج من %s ...", repo_id)
+        snapshot_download(
+            repo_id=repo_id,
+            local_dir=target_dir,
+            local_dir_use_symlinks=False,
+            resume_download=True,
+        )
+        logger.info("تم تحميل النموذج إلى %s", target_dir)
+    except Exception as e:
+        logger.warning(
+            "فشل تحميل النموذج: %s — سيتم استخدام التحميل التلقائي",
+            e,
+        )
 
 
 def initialize_whisper_model():

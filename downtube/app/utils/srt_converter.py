@@ -392,6 +392,68 @@ def _remove_prefix_overlap(prev_text: str, curr_text: str) -> str:
 _RTL_EMBED = "\u202B"
 
 
+def _parse_srt_timestamp(ts: str) -> float:
+    """تحويل توقيت SRT (00:00:01,000) إلى ثوانٍ"""
+    ts = ts.strip().replace(",", ".")
+    parts = ts.split(":")
+    if len(parts) == 3:
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+    return 0.0
+
+
+def parse_srt_to_segments(srt_content: str) -> list[dict]:
+    """تحويل محتوى SRT نصي إلى list[dict] بنفس format {start, end, text}"""
+    segments = []
+    block_pattern = re.compile(
+        r"(\d+)\s*\n"
+        r"(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*\n"
+        r"((?:.+\n?)*?)(?:\n|$)",
+        re.MULTILINE,
+    )
+    for match in block_pattern.finditer(srt_content):
+        start = _parse_srt_timestamp(match.group(2))
+        end = _parse_srt_timestamp(match.group(3))
+        text = match.group(4).strip().replace("\n", " ")
+        if text:
+            segments.append({"start": start, "end": end, "text": text})
+    return segments
+
+
+def max_lines_per_segment(segments: list[dict], max_lines: int = 2) -> list[dict]:
+    """
+    تقطيع المقاطع الطويلة (أكثر من max_lines) إلى مقاطع فرعية مع توزيع الـ timing.
+    """
+    if not segments:
+        return segments
+    result = []
+    for seg in segments:
+        text = seg.get("text", "").strip()
+        start = seg.get("start", 0)
+        end = seg.get("end", 0)
+        duration = end - start
+        if not text or duration <= 0:
+            result.append(dict(seg))
+            continue
+        # عد الأسطر — السطر ≈ 40 حرف
+        est_lines = max(1, len(text) // 40)
+        if est_lines <= max_lines:
+            result.append(dict(seg))
+            continue
+        # قص المقطع الطويل
+        words = text.split()
+        chunk_size = max(1, len(words) // est_lines)
+        chunk_dur = duration / est_lines
+        for i in range(0, len(words), chunk_size):
+            chunk_words = words[i:i + chunk_size]
+            chunk_text = " ".join(chunk_words)
+            if not chunk_text.strip():
+                continue
+            chunk_start = start + i / len(words) * duration
+            chunk_end = start + min(i + chunk_size, len(words)) / len(words) * duration
+            result.append({"start": chunk_start, "end": chunk_end, "text": chunk_text})
+    return result
+
+
 def groq_json_to_srt(segments: list[dict]) -> str:
     if not segments:
         return ""
