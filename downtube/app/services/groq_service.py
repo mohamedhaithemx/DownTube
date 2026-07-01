@@ -10,7 +10,15 @@ from pathlib import Path
 
 from faster_whisper import WhisperModel
 
-from app.utils.srt_converter import groq_json_to_srt, merge_short_segments, translate_segments_to_arabic
+from app.utils.srt_converter import (
+    groq_json_to_srt,
+    merge_short_segments,
+    deduplicate_overlapping_segments,
+    deduplicate_text_overlap,
+    translate_segments_to_arabic,
+    verify_arabic_output,
+    _percent_arabic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +31,10 @@ _model = None
 _model_lock = threading.Lock()
 
 # ── Settings ────────────────────────────────────────────────────────
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "medium")
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+WHISPER_MODEL_DIR = os.getenv("WHISPER_MODEL_DIR", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 CHUNK_DURATION_SEC = 540  # 9 دقائق — أقصى مدة لكل جزء
@@ -83,17 +92,52 @@ def _get_model() -> WhisperModel:
     if _model is None:
         with _model_lock:
             if _model is None:
+                model_path = WHISPER_MODEL_SIZE
+
+                # إذا كان WHISPER_MODEL_DIR محدد — نستخدم cached path
+                if WHISPER_MODEL_DIR:
+                    model_path = WHISPER_MODEL_DIR
+                    if not os.path.exists(model_path):
+                        logger.info(
+                            "النموذج غير موجود في %s — جاري التحميل...",
+                            model_path,
+                        )
+                        os.makedirs(model_path, exist_ok=True)
+                        _download_model(WHISPER_MODEL_SIZE, model_path)
+
                 logger.info(
                     "تحميل نموذج faster-whisper %s على %s (%s)",
                     WHISPER_MODEL_SIZE, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE,
                 )
                 _model = WhisperModel(
-                    WHISPER_MODEL_SIZE,
+                    model_path,
                     device=WHISPER_DEVICE,
                     compute_type=WHISPER_COMPUTE_TYPE,
+                    download_root=WHISPER_MODEL_DIR or None,
                 )
                 logger.info("تم تحميل النموذج بنجاح")
     return _model
+
+
+def _download_model(model_size: str, target_dir: str):
+    """تحميل نموذج faster-whisper إلى target_dir"""
+    try:
+        from huggingface_hub import snapshot_download
+
+        repo_id = f"guillaumeklf/faster-whisper-{model_size}"
+        logger.info("جاري تحميل النموذج من %s ...", repo_id)
+        snapshot_download(
+            repo_id=repo_id,
+            local_dir=target_dir,
+            local_dir_use_symlinks=False,
+            resume_download=True,
+        )
+        logger.info("تم تحميل النموذج إلى %s", target_dir)
+    except Exception as e:
+        logger.warning(
+            "فشل تحميل النموذج: %s — سيتم استخدام التحميل التلقائي",
+            e,
+        )
 
 
 def initialize_whisper_model():
@@ -247,38 +291,110 @@ def _find_nearest_silence(
 async def _extract_chunk(
     audio_path: str, start: float, end: float, output_path: str
 ):
-    """استخراج جزء من الصوت باستخدام FFmpeg"""
+    """استخراج جزء من الصوت باستخدام FFmpeg مع دقة عالية في التحديد الزمني.
+    - يحاول copy أولاً سريعاً
+    - لو الـ start_time الفعلي للـ chunk أبعد من 0.1 ثانية → يعيد ترميز بالضبط
+    - في النهاية يتأكد إن الملف صالح
+    """
     duration = end - start
 
-    def _run():
-        # محاولة copy أولاً (أسرع)
-        cmd_copy = [
-            "ffmpeg", "-y",
-            "-i", audio_path,
-            "-ss", str(start),
-            "-t", str(duration),
-            "-c", "copy",
-            output_path,
-        ]
-        result = subprocess.run(cmd_copy, capture_output=True, text=True, timeout=120)
-        if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            return
+    def _probe_start_time(filepath: str) -> float | None:
+        """استعلام عن وقت البداية الفعلي للملف"""
+        try:
+            r = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json",
+                 "-show_entries", "format=start_time", filepath],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode == 0:
+                data = json.loads(r.stdout)
+                return float(data.get("format", {}).get("start_time", 0))
+        except Exception:
+            pass
+        return None
 
-        # Fallback: إعادة ترميز
-        logger.debug("copy فشل للجزء %.0f-%.0f — إعادة ترميز", start, end)
-        cmd_reencode = [
+    def _reencode(start: float, duration: float, output_path: str):
+        """إعادة ترميز دقيقة — -ss قبل -i مع الترميز يعطي بداية مضبوطة"""
+        cmd = [
             "ffmpeg", "-y",
-            "-i", audio_path,
             "-ss", str(start),
+            "-i", audio_path,
             "-t", str(duration),
             "-ar", "16000",
             "-ac", "1",
             "-b:a", "64k",
             output_path,
         ]
-        result2 = subprocess.run(cmd_reencode, capture_output=True, text=True, timeout=300)
-        if result2.returncode != 0:
-            raise GroqServiceError(f"فشل استخراج الجزء: {result2.stderr[:200]}")
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            raise GroqServiceError(f"فشل استخراج الجزء: {r.stderr[:200]}")
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            raise GroqServiceError(f"الجزء الناتج فارغ: {output_path}")
+
+    def _verify_chunk(filepath: str) -> bool:
+        """تحقق أن الملف موجود وصالح"""
+        if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
+            return False
+        actual = _probe_start_time(filepath)
+        if actual is None:
+            return True  # لا يمكن الفحص — اقبل
+        if actual > 0.1:
+            logger.debug("chunk start_time=%.2f (>0.1) — غير دقيق", actual)
+            return False
+        duration_ok = _probe_duration_near(filepath, duration, tolerance=1.0)
+        if not duration_ok:
+            logger.debug("chunk duration غير مطابق — سيعاد")
+            return False
+        return True
+
+    def _probe_duration_near(filepath: str, expected: float, tolerance: float = 1.0) -> bool:
+        try:
+            r = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json",
+                 "-show_entries", "format=duration", filepath],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode == 0:
+                data = json.loads(r.stdout)
+                actual = float(data.get("format", {}).get("duration", 0))
+                return abs(actual - expected) <= tolerance
+        except Exception:
+            pass
+        return True  # لا يمكن الفحص — اقبل
+
+    def _run():
+        # ── محاولة copy أولاً ──
+        cmd_copy = [
+            "ffmpeg", "-y",
+            "-ss", str(start),
+            "-i", audio_path,
+            "-t", str(duration),
+            "-c", "copy",
+            output_path,
+        ]
+        result = subprocess.run(cmd_copy, capture_output=True, text=True, timeout=120)
+
+        copy_ok = (
+            result.returncode == 0
+            and os.path.exists(output_path)
+            and os.path.getsize(output_path) > 0
+        )
+
+        if copy_ok and _verify_chunk(output_path):
+            return
+
+        # copy غير دقيق — احذف الملف الخاطئ وحاول re-encode
+        if os.path.exists(output_path):
+            try:
+                os.unlink(output_path)
+            except Exception:
+                pass
+
+        logger.debug("copy غير دقيق للجزء %.0f-%.0f — إعادة ترميز", start, end)
+        _reencode(start, duration, output_path)
+
+        if not _verify_chunk(output_path):
+            raise GroqServiceError(f"chunk بعد re-encode لسه غير صالح: {output_path}")
 
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(_cpu_executor, _run)
@@ -531,29 +647,55 @@ async def generate_subtitles(
             progress_callback(66, 0, 0, "جاري ترتيب المقاطع...")
 
         all_segments.sort(key=lambda s: s["start"])
+        all_segments = deduplicate_overlapping_segments(all_segments)
         all_segments = merge_short_segments(all_segments)
 
         if progress_callback:
             progress_callback(68, 0, 0, "جاري فحص الحاجة للترجمة...")
 
         # ── Stage 4: Translation (68% → 90%) ──
-        needs_translation = (
-            detected_lang != "ar"
-            and not any(_has_arabic(seg.get("text", "")) for seg in all_segments)
-        )
+        # الترجمة للعربية — تتم دائماً إلا لو 90%+ من النص عربي فعلاً
+        pct_arabic = _percent_arabic(all_segments)
+        needs_translation = pct_arabic < 90
 
         if needs_translation:
             if progress_callback:
                 progress_callback(70, 0, 0, "جاري ترجمة النص...")
             loop = asyncio.get_event_loop()
-            all_segments = await loop.run_in_executor(None, translate_segments_to_arabic, all_segments, title)
+            all_segments = await loop.run_in_executor(
+                None,
+                lambda: translate_segments_to_arabic(
+                    all_segments, title,
+                    source_lang=detected_lang if detected_lang != "unknown" else "",
+                ),
+            )
             all_segments = merge_short_segments(all_segments)
+
+            # ── التحقق: لو الترجمة لسه فيها إنجليزي → إعادة ترجمة ببرومبت أشد ──
+            if not verify_arabic_output(all_segments):
+                logger.warning("الترجمة تحتوي على إنجليزية — إعادة ترجمة ببرومبت أشد")
+                if progress_callback:
+                    progress_callback(80, 0, 0, "إعادة ترجمة المقاطع غير العربية...")
+                all_segments = await loop.run_in_executor(
+                    None,
+                    lambda: translate_segments_to_arabic(
+                        all_segments, title + " (إعادة)",
+                        source_lang="",
+                    ),
+                )
+                all_segments = merge_short_segments(all_segments)
+                if not verify_arabic_output(all_segments):
+                    logger.warning("بعض المقاطع لا تزال تحتوي على إنجليزية بعد إعادة المحاولة")
+
             if progress_callback:
                 progress_callback(90, 0, 0, "تمت الترجمة")
         else:
-            logger.info("النص عربي — تخطي الترجمة عبر Llama")
+            logger.info("النص عربي (%d%%) — تخطي الترجمة عبر Llama", int(pct_arabic))
             if progress_callback:
                 progress_callback(90, 0, 0, "لا حاجة للترجمة")
+
+        # إزالة التكرار النصي بين المقاطع المتجاورة
+        all_segments = deduplicate_text_overlap(all_segments)
 
         # ── Stage 5: Generate SRT (90% → 100%) ──
         if progress_callback:
