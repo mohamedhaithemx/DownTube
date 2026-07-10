@@ -2,45 +2,38 @@
 
 <div dir="rtl">
 
-**DownTube** هو تطبيق ويب لتحميل فيديوهات يوتيوب مع الترجمة العربية، مدعوم بالذكاء الاصطناعي عبر Groq API.
+**DownTube** هو تطبيق ويب لتحميل فيديوهات يوتيوب مع الترجمة العربية، مدعوم بالذكاء الاصطناعي عبر Groq API + نموذج Whisper محلي.
 
 ## المميزات
 
 - تحميل فيديوهات يوتيوب بجودات متعددة (1080p / 720p / 480p / 360p / صوت فقط)
 - تحميل الترجمة العربية تلقائياً من يوتيوب
-- توليد الترجمة العربية تلقائياً باستخدام **Groq Whisper API** إذا لم تكن متوفرة
+- توليد الترجمة العربية عبر **Groq Whisper API** مع **Llama 3.3 70B** للترجمة
+- نموذج Whisper محلي **faster-whisper-medium** كـ fallback
 - عرض التقدم مباشر عبر WebSocket
-- واجهة مستخدم عصرية باللغة العربية (تصميم Ocean-Blue)
+- واجهة عصرية باللغة العربية (تصميم Dark Blue Tech)
 - معبأ بالكامل كحاوية Docker
-- يعمل بدون تحميل نماذج ذكاء اصطناعي محلية (خفيف وسريع)
 
-## التقنيات المستخدمة
+## التقنيات
 
-- **Backend:** Python 3.11 + FastAPI + yt-dlp + Groq SDK
+- **Backend:** Python 3.11 + FastAPI + yt-dlp + Groq SDK + faster-whisper
 - **Frontend:** HTML5 + CSS3 + JavaScript (بدون إطارات)
 - **الاتصال المباشر:** WebSocket
 - **التغليف:** Docker + docker-compose
 
-## متطلبات التشغيل
-
-1. **Docker** و **docker-compose** مثبتين على جهازك
-2. **مفتاح Groq API** (مجاني) — احصل عليه من [console.groq.com](https://console.groq.com)
-
-## طريقة التشغيل السريع
+## التشغيل السريع
 
 ```bash
 # 1. استنساخ المستودع
-git clone <your-repo-url>
-cd downtube
+git clone https://github.com/mohamedhaithemx/DownTube.git
+cd DownTube
 
 # 2. إنشاء ملف البيئة
-cp .env.example .env
-# ثم افتح .env وأضف GROQ_API_KEY الخاص بك
+cp downtube/.env.example downtube/.env
+# ثم افتح .env وأضف GROQ_API_KEY
 
-# 3. تشغيل التطبيق
-docker-compose up --build
-
-# 4. افتح المتصفح
+# 3. تشغيل Docker
+cd downtube && docker-compose up --build
 # http://localhost:8080
 ```
 
@@ -63,8 +56,10 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 | المتغير | الشرح | الافتراضي |
 |---------|-------|-----------|
 | `GROQ_API_KEY` | مفتاح Groq API (إجباري) | — |
+| `WHISPER_MODEL_SIZE` | حجم النموذج المحلي | medium |
+| `WHISPER_DEVICE` | الجهاز (cpu/cuda) | cpu |
+| `TEMP_DIR` | مجلد الملفات المؤقتة | /tmp/downtube |
 | `FILE_TTL_MINUTES` | مدة بقاء الملفات (دقائق) | 10 |
-| `MAX_DURATION_SECONDS` | أقصى مدة فيديو مسموحة | 7200 |
 | `RATE_LIMIT` | حد الطلبات لكل دقيقة | 10/minute |
 
 ## API
@@ -88,21 +83,21 @@ MIT License — ZET Dev
 
 # DownTube — ZET Dev
 
-**DownTube** is a YouTube video downloader web application with Arabic subtitle support powered by AI via the Groq API.
+**DownTube** is a YouTube video downloader web app with Arabic subtitles powered by AI via Groq API + local Whisper model.
 
 ## Features
 
 - Download YouTube videos in multiple qualities (1080p / 720p / 480p / 360p / Audio only)
 - Automatic Arabic subtitle fetching from YouTube
-- AI-powered Arabic subtitle generation via **Groq Whisper API** (when unavailable)
+- AI-powered transcription via **Groq Whisper** + translation via **Llama 3.3 70B**
+- Local fallback: **faster-whisper-medium** model (1.5 GB)
 - Real-time WebSocket progress updates
-- Modern Arabic UI with Ocean-Blue design
+- Modern Arabic UI (Dark Blue Tech design)
 - Fully containerized as a Docker image
-- No local AI model downloads (lightweight & fast)
 
 ## Tech Stack
 
-- **Backend:** Python 3.11 + FastAPI + yt-dlp + Groq SDK
+- **Backend:** Python 3.11 + FastAPI + yt-dlp + Groq SDK + faster-whisper
 - **Frontend:** HTML5 + CSS3 + Vanilla JavaScript
 - **Real-time:** WebSocket
 - **Deployment:** Docker + docker-compose
@@ -110,27 +105,12 @@ MIT License — ZET Dev
 ## Quick Start
 
 ```bash
-# 1. Clone the repo
-git clone <your-repo-url>
-cd downtube
-
-# 2. Create environment file
-cp .env.example .env
-# Open .env and add your GROQ_API_KEY
-
-# 3. Run with Docker
-docker-compose up --build
-
-# 4. Open browser
+git clone https://github.com/mohamedhaithemx/DownTube.git
+cd DownTube
+cp downtube/.env.example downtube/.env
+# Add GROQ_API_KEY to .env
+cd downtube && docker-compose up --build
 # http://localhost:8080
-```
-
-## Local Development (without Docker)
-
-```bash
-pip install -r app/requirements.txt
-cp .env.example .env
-uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 ## License
