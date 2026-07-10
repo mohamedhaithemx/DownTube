@@ -8,4 +8,9 @@ services:
       - ./downloads:/tmp/downtube
     env_file:
       - .env
+    environment:
+      - MAX_DURATION_VIDEO_SUBTITLE=72000
+      - MAX_DURATION_SINGLE=72000
+      - CHUNK_DURATION_SEC=480
+      - MAX_CONCURRENT_CHUNKS=5
     restart: unless-stopped

@@ -37,9 +37,10 @@ WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 WHISPER_MODEL_DIR = os.getenv("WHISPER_MODEL_DIR", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
-CHUNK_DURATION_SEC = 540  # 9 دقائق — أقصى مدة لكل جزء
-MAX_CONCURRENT_CHUNKS = 3  # أقصى عدد أجزاء بالتوازي (إدارة الذاكرة)
+CHUNK_DURATION_SEC = 480  # 8 دقائق — أقصى مدة لكل جزء (حجم أصغر = معالجة أسرع)
+MAX_CONCURRENT_CHUNKS = 5  # أقصى عدد أجزاء بالتوازي (تحسين لفيديوهات 20 ساعة)
 GROQ_WHISPER_MODEL = "whisper-large-v3-turbo"
+GROQ_MAX_FILE_SIZE = 24 * 1024 * 1024  # 24 MB — حد Groq API
 
 ARABIC_RANGES = [
     (0x0600, 0x06FF),
@@ -420,11 +421,16 @@ async def _transcribe_chunk_groq(
     def _call():
         with open(chunk_path, "rb") as f:
             mime = _get_audio_mime(chunk_path)
+            # تحقق من حجم الملف — لو أكبر من حد Groq (24MB) أعد التقسيم
+            file_size = os.path.getsize(chunk_path)
+            if file_size > GROQ_MAX_FILE_SIZE:
+                raise GroqServiceError(f"الجزء أكبر من {GROQ_MAX_FILE_SIZE // (1024*1024)}MB ({file_size // (1024*1024)}MB) — يجب تقسيمه")
             transcription = client.audio.transcriptions.create(
                 file=(os.path.basename(chunk_path), f, mime),
                 model=GROQ_WHISPER_MODEL,
                 response_format="verbose_json",
                 temperature=0,
+                language="ar",  # توجيه النموذج للعربية مباشرة
             )
         return transcription
 
@@ -432,10 +438,10 @@ async def _transcribe_chunk_groq(
     try:
         transcription = await asyncio.wait_for(
             loop.run_in_executor(None, _call),
-            timeout=120
+            timeout=300  # 5 دقائق — وقت أطول للأجزاء الكبيرة
         )
     except asyncio.TimeoutError:
-        raise GroqServiceError("Groq Whisper API لم يستجب خلال 120 ثانية")
+        raise GroqServiceError("Groq Whisper API لم يستجب خلال 300 ثانية")
 
     # استخراج الشرائح مع تصحيح الـ timestamps
     segments = []
@@ -568,8 +574,8 @@ async def generate_subtitles(
         total_chunks = len(chunks)
         progress.update(1.0, f"تم تقسيم الصوت إلى {total_chunks} جزء", "audio_prep")
 
-        # ── Stage 2: Transcription (8% → 65%) ──
-        transcribe_progress = _SmoothProgress(progress_callback, 8, 65)
+        # ── Stage 2: Transcription (8% → 55%) ──
+        transcribe_progress = _SmoothProgress(progress_callback, 8, 55)
 
         all_segments = []
         detected_lang = "unknown"
@@ -642,18 +648,18 @@ async def generate_subtitles(
         if not all_segments:
             raise GroqServiceError("لم يتم التعرف على أي نص")
 
-        # ── Stage 3: Merge & Sort (65% → 68%) ──
+        # ── Stage 3: Merge & Sort (55% → 60%) ──
         if progress_callback:
-            progress_callback(66, 0, 0, "جاري ترتيب المقاطع...")
+            progress_callback(56, 0, 0, "جاري ترتيب المقاطع...")
 
         all_segments.sort(key=lambda s: s["start"])
         all_segments = deduplicate_overlapping_segments(all_segments)
         all_segments = merge_short_segments(all_segments)
 
         if progress_callback:
-            progress_callback(68, 0, 0, "جاري فحص الحاجة للترجمة...")
+            progress_callback(60, 0, 0, "جاري فحص الحاجة للترجمة...")
 
-        # ── Stage 4: Translation (68% → 90%) ──
+        # ── Stage 4: Translation (60% → 95%) ──
         # الترجمة للعربية — تتم دائماً إلا لو 90%+ من النص عربي فعلاً
         pct_arabic = _percent_arabic(all_segments)
         needs_translation = pct_arabic < 90

@@ -12,10 +12,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/info", tags=["info"])
 
-MAX_DURATION_VIDEO_SUBTITLE = int(os.getenv("MAX_DURATION_VIDEO_SUBTITLE", "14400"))
-MAX_DURATION_SINGLE = int(os.getenv("MAX_DURATION_SINGLE", "0"))
-BASIC_TIMEOUT = int(os.getenv("BASIC_TIMEOUT_SECONDS", "15"))
-FORMATS_TIMEOUT = int(os.getenv("INFO_TIMEOUT_SECONDS", "60"))
+MAX_DURATION_VIDEO_SUBTITLE = int(os.getenv("MAX_DURATION_VIDEO_SUBTITLE", "72000"))
+MAX_DURATION_SINGLE = int(os.getenv("MAX_DURATION_SINGLE", "72000"))
+BASIC_TIMEOUT = int(os.getenv("BASIC_TIMEOUT_SECONDS", "30"))
+FORMATS_TIMEOUT = int(os.getenv("INFO_TIMEOUT_SECONDS", "120"))
 
 
 @router.get("")

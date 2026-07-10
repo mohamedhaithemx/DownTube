@@ -9,7 +9,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 TEMP_DIR = Path("/tmp/downtube")
-FILE_TTL_MINUTES = 10
+FILE_TTL_MINUTES = 60  # 60 دقيقة — وقت أطول للفيديوهات الكبيرة (حتى 20 ساعة)
 
 
 def ensure_temp_dir():

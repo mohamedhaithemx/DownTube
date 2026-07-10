@@ -21,8 +21,8 @@ from app.utils.file_manager import (
     safe_filename,
 )
 
-MAX_DURATION_VIDEO_SUBTITLE = int(os.getenv("MAX_DURATION_VIDEO_SUBTITLE", "14400"))
-MAX_DURATION_SINGLE = int(os.getenv("MAX_DURATION_SINGLE", "0"))
+MAX_DURATION_VIDEO_SUBTITLE = int(os.getenv("MAX_DURATION_VIDEO_SUBTITLE", "72000"))
+MAX_DURATION_SINGLE = int(os.getenv("MAX_DURATION_SINGLE", "72000"))
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class CombinedProgressTracker:
 
     def _current_stage(self) -> str:
         if self.subtitle_pct < 10:
-            return "subtitle_fetch"
+            return "audio_download"
         if self.subtitle_pct < 30:
             return "audio_prep"
         if self.subtitle_pct < 75:
@@ -147,7 +147,7 @@ class CombinedProgressTracker:
     def _current_message(self, stage: str = None) -> str:
         s = stage or self._current_stage()
         messages = {
-            "subtitle_fetch": "جاري فحص الترجمات المتاحة...",
+            "audio_download": "جاري تحميل الصوت لتوليد الترجمة العربية...",
             "audio_prep": "جاري تحضير الصوت...",
             "transcribing": "جاري نسخ الصوت...",
             "translating": "جاري ترجمة النص...",
@@ -172,8 +172,8 @@ def _stage_from_msg(message: str) -> str:
         return "saving"
     if "تحميل" in msg_lower or "download" in msg_lower:
         return "downloading"
-    if "فحص" in msg_lower or "ترجمات" in msg_lower or "subtitle" in msg_lower:
-        return "subtitle_fetch"
+    if "توليد" in msg_lower or "whisper" in msg_lower or "نسخ" in msg_lower:
+        return "transcribing"
     return "processing"
 
 
@@ -276,15 +276,16 @@ async def _process_download(task_id: str, req: DownloadRequest):
             limit = MAX_DURATION_VIDEO_SUBTITLE
             if limit > 0:
                 try:
-                    info = await extract_info_flat(req.url, timeout=15)
+                    info = await extract_info_flat(req.url, timeout=45)
                     duration = info.get("duration", 0)
                     if duration > limit:
                         max_hours = limit // 3600
+                        hours = duration / 3600
                         await _broadcast(task_id, {
-                            "status": "error",
-                            "message": f"مدة الفيديو تتجاوز {max_hours} ساعات. يرجى استخدام تحميل فيديو فقط أو ترجمة فقط.",
+                            "status": "info", "percent": 2,
+                            "stage": "starting",
+                            "message": f"⚠ فيديو طويل ({hours:.1f} ساعة) — جاري التحضير...",
                         })
-                        return
                 except Exception as e:
                     logger.warning("فشل التحقق من المدة: %s", e)
 
@@ -324,8 +325,8 @@ async def _process_subtitle_only(
 
     await _broadcast(task_id, {
         "status": "info", "percent": 2,
-        "stage": "audio_prep",
-        "message": "جاري جلب الترجمة...",
+        "stage": "audio_download",
+        "message": "جاري توليد الترجمة العربية فوراً...",
     })
 
     subtitle_result = None
@@ -412,8 +413,8 @@ async def _process_sequential_embed(
     if req.include_subtitles:
         await _broadcast(task_id, {
             "status": "info", "percent": 2,
-            "stage": "audio_prep",
-            "message": "جاري فحص الترجمات...",
+            "stage": "audio_download",
+            "message": "جاري توليد الترجمة العربية فوراً...",
         })
         try:
             subtitle_result = await fetch_subtitles(

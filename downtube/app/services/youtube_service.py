@@ -16,7 +16,7 @@ from app.utils.validators import ERROR_MESSAGES
 
 logger = logging.getLogger(__name__)
 
-_executor = ThreadPoolExecutor(max_workers=2)
+_executor = ThreadPoolExecutor(max_workers=4)
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -31,15 +31,18 @@ YDL_OPTS_BASE = {
     "no_warnings": True,
     "nocheckcertificate": True,
     "extract_flat": False,
-    "retries": 2,
-    "fragment_retries": 2,
-    "socket_timeout": 30,
+    "retries": 5,
+    "fragment_retries": 5,
+    "socket_timeout": 120,
     "extractor_args": {"youtube": {"skip": ["dash", "hls", "webpage", "comments"]}},
     "sleep_interval_requests": 0.5,
+    "concurrent_fragment_downloads": 8,
+    "throttledratelimit": 100000,
+    "buffersize": "16K",
 }
 
-YDL_RETRIES = 2
-YDL_DELAY = 5
+YDL_RETRIES = 4
+YDL_DELAY = 3
 
 
 class YouTubeError(Exception):
@@ -102,7 +105,7 @@ def _ydl_opts_to_cli(opts: dict) -> list[str]:
     return args
 
 
-async def _run_ytdlp(url: str, extra_args: list[str] | None = None, timeout: int = 45) -> dict[str, Any]:
+async def _run_ytdlp(url: str, extra_args: list[str] | None = None, timeout: int = 120) -> dict[str, Any]:
     process = None
     try:
         base_opts = _make_ydl_opts()
@@ -150,7 +153,7 @@ async def _run_ytdlp(url: str, extra_args: list[str] | None = None, timeout: int
                 pass
 
 
-async def _extract_info_impl(url: str, timeout: int = 60) -> dict[str, Any]:
+async def _extract_info_impl(url: str, timeout: int = 180) -> dict[str, Any]:
     loop = asyncio.get_event_loop()
 
     def _sync():
@@ -176,7 +179,7 @@ async def _extract_info_impl(url: str, timeout: int = 60) -> dict[str, Any]:
         raise YouTubeError(ERROR_MESSAGES["internal_error"], status_code=500)
 
 
-async def extract_info_flat(url: str, timeout: int = 15) -> dict[str, Any]:
+async def extract_info_flat(url: str, timeout: int = 45) -> dict[str, Any]:
     loop = asyncio.get_event_loop()
 
     def _sync():
@@ -201,7 +204,7 @@ async def extract_info_flat(url: str, timeout: int = 15) -> dict[str, Any]:
         raise YouTubeError(ERROR_MESSAGES["internal_error"], status_code=500)
 
 
-async def extract_info(url: str, timeout: int = 60) -> dict[str, Any]:
+async def extract_info(url: str, timeout: int = 180) -> dict[str, Any]:
     for attempt in range(YDL_RETRIES):
         try:
             return await _extract_info_impl(url, timeout=timeout)
@@ -255,6 +258,8 @@ async def download_video(
             merge_output_format="mp4",
             progress_hooks=[progress_hook],
             postprocessors=postprocessors,
+            continuedl=True,
+            noprogress=False,
         )
         if cancel_event:
             opts["nooverwrites"] = True
@@ -318,6 +323,7 @@ async def download_audio(
                 "preferredquality": "192",
             }],
             progress_hooks=[progress_hook],
+            continuedl=True,
         )
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -329,7 +335,7 @@ async def download_audio(
             loop = asyncio.get_event_loop()
             filename = await asyncio.wait_for(
                 loop.run_in_executor(_executor, _sync_dl),
-                timeout=1800
+                timeout=7200  # ساعتان للفيديوهات الطويلة (حتى 20 ساعة)
             )
             return filename
         except asyncio.TimeoutError:
@@ -381,7 +387,7 @@ async def embed_subtitles(
             output_path,
         ]
         logger.info("محاولة دمج soft subtitles عبر mov_text")
-        result_soft = subprocess.run(cmd_soft, capture_output=True, text=True, timeout=120)
+        result_soft = subprocess.run(cmd_soft, capture_output=True, text=True, timeout=600)
         if result_soft.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             logger.info("تم الدمج بنجاح عبر mov_text (soft)")
             return output_path

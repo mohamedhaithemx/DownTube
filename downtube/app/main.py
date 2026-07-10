@@ -61,8 +61,8 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["10/minute"])
 
 app = FastAPI(
     title="DownTube — ZET Dev",
-    description="تحميل فيديوهات يوتيوب مع الترجمة العربية",
-    version="2.0.0",
+    description="تحميل فيديوهات يوتيوب (حتى 20 ساعة) مع الترجمة العربية الفورية",
+    version="3.0.0",
     lifespan=lifespan,
 )
 
@@ -103,7 +103,7 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "2.0.0", "developer": "ZET Dev"}
+    return {"status": "ok", "version": "3.0.0", "developer": "ZET Dev"}
 
 
 @app.exception_handler(Exception)

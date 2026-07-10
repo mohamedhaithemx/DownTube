@@ -98,8 +98,8 @@ class App {
     const curMode = document.querySelector('input[name="embed-mode"]:checked')?.value || 'separate';
     const isSingleMode = curMode === 'video-only' || curMode === 'subtitle-only';
     const maxDur = isSingleMode
-      ? (data.max_duration_single || 0)
-      : (data.max_duration_video_subtitle || 14400);
+      ? (data.max_duration_single || 72000)
+      : (data.max_duration_video_subtitle || 72000);
     if (maxDur > 0 && data.duration >= maxDur) {
       const hours = Math.floor(data.duration / 3600);
       const maxHours = Math.floor(maxDur / 3600);
@@ -377,16 +377,9 @@ class VideoInfo {
 
   _renderSubtitleStatus(data) {
     const subStatus = document.getElementById('subtitle-status');
-    if (data.has_arabic_subtitles) {
-      subStatus.textContent = '✓ الترجمة العربية متوفرة';
-      subStatus.className = 'subtitle-badge available';
-    } else if (data.has_auto_subtitles) {
-      subStatus.textContent = '⚡ الترجمة التلقائية متوفرة';
-      subStatus.className = 'subtitle-badge pending';
-    } else {
-      subStatus.textContent = '⚡ سيتم التوليد تلقائياً';
-      subStatus.className = 'subtitle-badge pending';
-    }
+    // دائماً سيتم توليد الترجمة العربية فوراً
+    subStatus.textContent = '⚡ ترجمة عربية فورية';
+    subStatus.className = 'subtitle-badge pending';
   }
 
   _escapeHtml(str) {
@@ -429,7 +422,7 @@ class Downloader {
     btn.innerHTML = '<span class="spinner"></span> جاري البدء...';
 
     this.controller = new AbortController();
-    const timeout = setTimeout(() => this.controller.abort(), subtitleOnly ? 120000 : 300000);
+    const timeout = setTimeout(() => this.controller.abort(), subtitleOnly ? 600000 : 3600000);
 
     try {
       this.taskId = (crypto.randomUUID && crypto.randomUUID()) ||
@@ -669,8 +662,7 @@ class UIManager {
       if (data.subtitle_file) {
         dlSub.onclick = () => this._downloadFile(data.subtitle_file, data.task_id);
         dlSub.style.display = '';
-        const subType = data.subtitle_type === 'official' ? 'رسمية'
-          : data.subtitle_type === 'generated' ? 'AI' : '';
+        const subType = data.subtitle_type === 'generated' ? 'AI عربية' : '';
         subText.textContent = subType ? `تحميل الترجمة (${subType})` : 'تحميل الترجمة';
       }
     }
